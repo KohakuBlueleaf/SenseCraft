@@ -169,6 +169,7 @@ def main():
 
         def forward(self, x):
             return self.conv(x)
+
     """Main function for testing"""
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
@@ -187,7 +188,11 @@ def main():
         output = test_net(data + torch.randn_like(data) * 0.05)
         loss = loss_fn(data, output)
         loss.backward()
-        print(f"Loss: {loss.item()} - Grad norm: {test_net.conv.weight.grad.norm().item()}", flush=True, end="\r")
+        print(
+            f"Loss: {loss.item()} - Grad norm: {test_net.conv.weight.grad.norm().item()}",
+            flush=True,
+            end="\r",
+        )
         test_opt.step()
         test_opt.zero_grad()
     print("\nFinished small test.")
