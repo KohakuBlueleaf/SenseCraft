@@ -72,6 +72,9 @@ class ConvNextDinoV3PerceptualLoss(nn.Module):
             self.blocks.extend(stage.layers)
 
         self.blocks = self.blocks.eval().requires_grad_(False)
+        for idx, block in enumerate(self.blocks):
+            if idx in feature_layers:
+                print("Using Block", idx, block.__class__.__name__)
 
         # Register normalization parameters
         self.register_buffer(
@@ -169,7 +172,7 @@ def main():
     test_net = TestNet().to(device).train()
     test_opt = torch.optim.Adam(test_net.parameters(), lr=1e-3)
     loss_fn = ConvNextDinoV3PerceptualLoss(
-        feature_layers=[0, 2, 4, 8, 14, 20, 26, 32],
+        feature_layers=[2, 4, 8, 14, 20, 26, 32, 38],
         feature_weights=[1.0]*8,
     ).to(device)
 
