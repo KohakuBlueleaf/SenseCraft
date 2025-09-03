@@ -12,6 +12,7 @@ from typing import List, Tuple, Optional
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
 # Need 4.56.0 ^
 from transformers import DINOv3ConvNextModel
 
@@ -72,9 +73,6 @@ class ConvNextDinoV3PerceptualLoss(nn.Module):
             self.blocks.extend(stage.layers)
 
         self.blocks = self.blocks.eval().requires_grad_(False)
-        for idx, block in enumerate(self.blocks):
-            if idx in feature_layers:
-                print("Using Block", idx, block.__class__.__name__)
 
         # Register normalization parameters
         self.register_buffer(
@@ -173,7 +171,7 @@ def main():
     test_opt = torch.optim.Adam(test_net.parameters(), lr=1e-3)
     loss_fn = ConvNextDinoV3PerceptualLoss(
         feature_layers=[2, 4, 8, 14, 20, 26, 32, 38],
-        feature_weights=[1.0]*8,
+        feature_weights=[1.0] * 8,
     ).to(device)
 
     test_input_image = torch.rand(1, 3, 256, 256, device=device)

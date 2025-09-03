@@ -28,7 +28,7 @@ class LPIPS(nn.Module):
         use_dropout=True,
         model_path=None,
         eval_mode=True,
-        verbose=True,
+        verbose=False,
     ):
         """Initializes a perceptual loss torch.nn.Module
 

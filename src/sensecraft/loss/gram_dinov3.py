@@ -5,11 +5,13 @@ Original code is licensed under the Apache License 2.0.
 
 This modified code utilize ViT model instead of ConvNext
 """
+
 from enum import Enum
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
 # Need 4.56.0 ^
 from transformers import DINOv3ViTModel
 
@@ -66,12 +68,14 @@ class ViTDinoV3PerceptualLoss(nn.Module):
         """Compute Gram matrix of feature maps"""
         b, seq, c = x.size()
         features = x
-        gram = torch.bmm(features.transpose(1, 2), features) # b, c, c
+        gram = torch.bmm(features.transpose(1, 2), features)  # b, c, c
         if normalize:
             gram = gram / seq
         return gram
 
-    def forward(self, input: torch.Tensor, target: torch.Tensor, **kwargs) -> torch.Tensor:
+    def forward(
+        self, input: torch.Tensor, target: torch.Tensor, **kwargs
+    ) -> torch.Tensor:
         """Forward pass to compute loss"""
         input = self.normalize_input(input)
         target = self.normalize_input(target)
