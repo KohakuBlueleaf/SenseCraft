@@ -1,10 +1,11 @@
 # SenseCraft: Unified Perceptual Feature Loss Framework
 
-A PyTorch framework providing various perceptual loss functions for image processing tasks including super-resolution, image restoration, style transfer, and more.
+A PyTorch framework providing various perceptual loss functions and evaluation metrics for image processing tasks including super-resolution, image restoration, style transfer, and more.
 
 ## Features
 
 - **Compound Loss System**: `SenseCraftLoss` for easy multi-loss configuration with automatic value range handling
+- **Evaluation Metrics**: PSNR, SSIM, MS-SSIM, LPIPS with functional API and dB scale support
 - **Multiple Perceptual Loss Types**: ConvNext, DINOv3 (ConvNext & ViT), LPIPS
 - **Frequency Domain Losses**: FFT and Patch-FFT losses with configurable normalization
 - **Edge & Structure Losses**: Sobel, Laplacian, Gradient, Structure Tensor losses
@@ -178,6 +179,110 @@ loss = fft_loss(predicted, target)
 ssim_loss = SSIMLoss(data_range=1.0)
 loss = ssim_loss(predicted, target)
 ```
+
+## Evaluation Metrics
+
+SenseCraft provides evaluation metrics separate from loss functions. Metrics return actual quality values (not loss formulations).
+
+### Functional API (Recommended)
+
+The functional API is simple and auto-manages resources like LPIPS models:
+
+```python
+from sensecraft.metrics import psnr, ssim, ms_ssim, rmse, mae, mape, lpips
+
+# Compute metrics (tensors should be in [0, 1] range for most metrics)
+pred = torch.rand(1, 3, 256, 256)
+target = torch.rand(1, 3, 256, 256)
+
+# PSNR (always in dB, higher is better)
+print(f"PSNR: {psnr(pred, target):.2f} dB")
+
+# SSIM (0-1, higher is better)
+print(f"SSIM: {ssim(pred, target):.4f}")
+
+# SSIM in dB scale (higher is better)
+print(f"SSIM: {ssim(pred, target, as_db=True):.2f} dB")
+
+# MS-SSIM (requires ~160x160 minimum image size)
+print(f"MS-SSIM: {ms_ssim(pred, target):.4f}")
+
+# Error metrics (lower is better)
+print(f"RMSE: {rmse(pred, target):.4f}")
+print(f"MAE: {mae(pred, target):.4f}")
+print(f"MAPE: {mape(pred, target):.4f}")  # Mean Absolute Percentage Error
+
+# LPIPS (lower is better, expects [-1, 1] range)
+pred_sym = pred * 2 - 1
+target_sym = target * 2 - 1
+print(f"LPIPS: {lpips(pred_sym, target_sym):.4f}")
+```
+
+### Data Range
+
+For PSNR and SSIM metrics, `data_range` specifies the dynamic range:
+- `data_range=1.0` for images in `[0, 1]`
+- `data_range=2.0` for images in `[-1, 1]`
+- `data_range=255.0` for images in `[0, 255]`
+
+```python
+# For [-1, 1] normalized images
+psnr_val = psnr(pred, target, data_range=2.0)
+ssim_val = ssim(pred, target, data_range=2.0)
+```
+
+### dB Scale for SSIM/MS-SSIM
+
+SSIM and MS-SSIM can be returned in dB scale using `as_db=True`:
+
+```python
+# dB scale: -10 * log10(1 - ssim_value)
+# Gives values like 15-25 dB for typical quality ranges
+ssim_db = ssim(pred, target, as_db=True)  # e.g., 18.5 dB
+ms_ssim_db = ms_ssim(pred, target, as_db=True)  # e.g., 22.1 dB
+```
+
+### LPIPS Auto-Caching
+
+The `lpips()` function automatically caches models and moves them to the correct device:
+
+```python
+# First call loads the model
+val1 = lpips(pred1, target1, net="alex")  # Loads AlexNet model
+
+# Subsequent calls reuse the cached model
+val2 = lpips(pred2, target2, net="alex")  # Uses cached model
+
+# Different network types are cached separately
+val3 = lpips(pred3, target3, net="vgg")  # Loads and caches VGG model
+```
+
+### Class-based API
+
+For repeated use with the same settings:
+
+```python
+from sensecraft.metrics import PSNR, SSIM, MSSSIM, RMSE, MAE, MAPE
+
+psnr_metric = PSNR(data_range=1.0)
+ssim_metric = SSIM(data_range=1.0, as_db=True)
+
+# Use like nn.Module
+psnr_val = psnr_metric(pred, target)
+ssim_val = ssim_metric(pred, target)
+```
+
+### Available Metrics
+
+| Function | Class | Description | Range | Better |
+|----------|-------|-------------|-------|--------|
+| `psnr()` | `PSNR` | Peak Signal-to-Noise Ratio | dB | Higher |
+| `ssim()` | `SSIM` | Structural Similarity | 0-1 or dB | Higher |
+| `ms_ssim()` | `MSSSIM` | Multi-Scale SSIM | 0-1 or dB | Higher |
+| `rmse()` | `RMSE` | Root Mean Squared Error | 0+ | Lower |
+| `mae()` | `MAE` | Mean Absolute Error | 0+ | Lower |
+| `mape()` | `MAPE` | Mean Absolute Percentage Error | 0+ | Lower |
+| `lpips()` | `LPIPSMetric` | Learned Perceptual Similarity | 0+ | Lower |
 
 ## Available Losses
 
@@ -435,7 +540,7 @@ loss = tfft(video_pred, video_target)
 
 ## Example: Testing Distortions
 
-The package includes an example script to compare loss behavior under various distortions:
+The package includes an example script to compare loss and metric behavior under various distortions:
 
 ```bash
 # Run the distortion test
@@ -448,11 +553,22 @@ python examples/test_distortions.py --image path/to/image.png
 python examples/test_distortions.py --no-dinov3
 ```
 
-This generates plots in `results/` showing:
+This generates plots in `results/{image_name}/`:
+
+**Loss plots** (`losses/`):
 - Loss values vs distortion level
 - Gradient norms vs distortion level
 
-For distortion types:
+**Metric plots** (`metrics/`):
+- PSNR, SSIM, MS-SSIM (dB scale) vs distortion level
+- SSIM, MS-SSIM (0-1 scale) vs distortion level
+- RMSE, MAE, MAPE, LPIPS vs distortion level
+
+**Combined plots**:
+- `all_distortions_losses.png` - Grid of all loss plots
+- `all_distortions_metrics.png` - Grid of all metric plots
+
+Distortion types tested:
 - JPEG compression (quality 5-100)
 - WebP compression (quality 5-100)
 - Gaussian noise (sigma 0-0.3)
@@ -494,6 +610,7 @@ Available model types for DINOv3 losses:
 - numpy
 
 **Optional:**
+- pytorch-msssim (for SSIM/MS-SSIM metrics and losses)
 - transformers >= 4.56.0 (for DINOv3 losses)
 - scikit-image (for color space conversions)
 - matplotlib (for example scripts)
