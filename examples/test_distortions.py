@@ -1,11 +1,12 @@
 """
-Test script for evaluating different loss functions under various image distortions.
+Test script for evaluating different loss functions and metrics under various image distortions.
 
 This script:
 1. Loads test images from images/test*.{jpg,jpeg,png,webp}
 2. Applies distortions: JPEG/WebP compression, Gaussian noise, Gaussian blur
 3. Computes loss values and gradient norms for each distortion level
-4. Saves plots to results/**/*.png
+4. Computes metric values (PSNR, SSIM, MS-SSIM, etc.) for each distortion level
+5. Saves plots to results/**/*.png
 
 Usage:
     python examples/test_distortions.py [--device cuda/cpu] [--image PATH]
@@ -33,6 +34,7 @@ from sensecraft.loss import (
     FFTLoss,
     NormType,
 )
+from sensecraft.metrics import psnr, ssim, ms_ssim, rmse, mae, lpips
 
 
 # ============================================================================
@@ -232,6 +234,36 @@ def get_perceptual_losses(device: torch.device) -> Dict[str, torch.nn.Module]:
     return losses
 
 
+def get_metrics(device: torch.device) -> Dict[str, Callable]:
+    """Get evaluation metrics as callables (functional API).
+
+    Returns dict of metric functions that take (input, target) tensors.
+    """
+    metrics = {
+        "PSNR": lambda x, y: psnr(x, y, data_range=1.0),
+        "RMSE": rmse,
+        "MAE": mae,
+    }
+
+    # SSIM (regular and dB)
+    try:
+        metrics["SSIM"] = lambda x, y: ssim(x, y, data_range=1.0)
+        metrics["SSIM_dB"] = lambda x, y: ssim(x, y, data_range=1.0, as_db=True)
+        metrics["MS-SSIM"] = lambda x, y: ms_ssim(x, y, data_range=1.0)
+        metrics["MS-SSIM_dB"] = lambda x, y: ms_ssim(x, y, data_range=1.0, as_db=True)
+    except Exception as e:
+        print(f"Warning: Could not load SSIM/MS-SSIM metrics: {e}")
+
+    # LPIPS metric (auto-caches model)
+    try:
+        # Wrap to convert from [0,1] to [-1,1]
+        metrics["LPIPS"] = lambda x, y: lpips(x * 2 - 1, y * 2 - 1, net="alex")
+    except Exception as e:
+        print(f"Warning: Could not load LPIPS metric: {e}")
+
+    return metrics
+
+
 # ============================================================================
 # Evaluation Functions
 # ============================================================================
@@ -261,6 +293,28 @@ def compute_loss_and_grad(
     loss_value = loss.item()
 
     return loss_value, grad_norm
+
+
+@torch.no_grad()
+def compute_metric(
+    metric_fn: Callable,
+    gt: torch.Tensor,
+    distorted: torch.Tensor,
+) -> float:
+    """Compute metric value (no gradient).
+
+    Args:
+        metric_fn: Metric function (callable)
+        gt: Ground truth image tensor (B, C, H, W)
+        distorted: Distorted image tensor (B, C, H, W)
+
+    Returns:
+        Metric value
+    """
+    value = metric_fn(distorted, gt)
+    if isinstance(value, torch.Tensor):
+        return value.item()
+    return value
 
 
 def evaluate_distortion(
@@ -301,6 +355,44 @@ def evaluate_distortion(
                 print(f"  Warning: {name} failed at level {level}: {e}")
                 results[name]["loss"].append(float("nan"))
                 results[name]["grad"].append(float("nan"))
+
+    return results
+
+
+def evaluate_distortion_metrics(
+    metric_fns: Dict[str, torch.nn.Module],
+    gt: torch.Tensor,
+    distort_fn: Callable,
+    distort_levels: List,
+    distort_name: str,
+) -> Dict[str, List[float]]:
+    """Evaluate all metrics across distortion levels (no gradient).
+
+    Args:
+        metric_fns: Dictionary of metric functions
+        gt: Ground truth image (C, H, W) in range [0, 1]
+        distort_fn: Distortion function (img, level) -> distorted_img
+        distort_levels: List of distortion levels to test
+        distort_name: Name of the distortion for logging
+
+    Returns:
+        Dictionary mapping metric_name -> [values...]
+    """
+    results = {name: [] for name in metric_fns.keys()}
+
+    gt_batch = gt.unsqueeze(0)  # Add batch dimension
+
+    for level in distort_levels:
+        distorted = distort_fn(gt, level)
+        distorted_batch = distorted.unsqueeze(0)
+
+        for name, metric_fn in metric_fns.items():
+            try:
+                metric_val = compute_metric(metric_fn, gt_batch, distorted_batch)
+                results[name].append(metric_val)
+            except Exception as e:
+                print(f"  Warning: Metric {name} failed at level {level}: {e}")
+                results[name].append(float("nan"))
 
     return results
 
@@ -471,6 +563,141 @@ def plot_pairwise_comparison(
     plt.close()
 
 
+def plot_metrics(
+    results: Dict[str, List[float]],
+    x_values: List,
+    x_label: str,
+    title: str,
+    output_path: Path,
+):
+    """Plot metric results.
+
+    Args:
+        results: Dictionary mapping metric_name -> [values...]
+        x_values: X-axis values (distortion levels)
+        x_label: Label for x-axis
+        title: Plot title
+        output_path: Path to save the plot
+    """
+    # Separate metrics into groups for better visualization
+    # Group 1: dB metrics (PSNR, SSIM_dB, MS-SSIM_dB)
+    # Group 2: 0-1 metrics (SSIM, MS-SSIM)
+    # Group 3: Error metrics (RMSE, MAE, LPIPS) - lower is better
+
+    db_metrics = {k: v for k, v in results.items() if "dB" in k or k == "PSNR"}
+    similarity_metrics = {k: v for k, v in results.items() if k in ["SSIM", "MS-SSIM"]}
+    error_metrics = {k: v for k, v in results.items() if k in ["RMSE", "MAE", "LPIPS"]}
+
+    # Determine number of subplots needed
+    n_plots = sum(
+        [
+            1 if db_metrics else 0,
+            1 if similarity_metrics else 0,
+            1 if error_metrics else 0,
+        ]
+    )
+    if n_plots == 0:
+        return
+
+    fig, axes = plt.subplots(1, n_plots, figsize=(6 * n_plots, 5))
+    if n_plots == 1:
+        axes = [axes]
+
+    plot_idx = 0
+
+    # Plot dB metrics
+    if db_metrics:
+        ax = axes[plot_idx]
+        for name, data in db_metrics.items():
+            ax.plot(x_values, data, marker="o", label=name, markersize=4)
+        ax.set_xlabel(x_label)
+        ax.set_ylabel("Value (dB)")
+        ax.set_title(f"{title} - Quality Metrics (dB)")
+        ax.legend(loc="best", fontsize=8)
+        ax.grid(True, alpha=0.3)
+        plot_idx += 1
+
+    # Plot similarity metrics (0-1)
+    if similarity_metrics:
+        ax = axes[plot_idx]
+        for name, data in similarity_metrics.items():
+            ax.plot(x_values, data, marker="o", label=name, markersize=4)
+        ax.set_xlabel(x_label)
+        ax.set_ylabel("Similarity (0-1)")
+        ax.set_title(f"{title} - Similarity Metrics")
+        ax.legend(loc="best", fontsize=8)
+        ax.grid(True, alpha=0.3)
+        ax.set_ylim(-0.05, 1.05)
+        plot_idx += 1
+
+    # Plot error metrics
+    if error_metrics:
+        ax = axes[plot_idx]
+        for name, data in error_metrics.items():
+            ax.plot(x_values, data, marker="o", label=name, markersize=4)
+        ax.set_xlabel(x_label)
+        ax.set_ylabel("Error (lower is better)")
+        ax.set_title(f"{title} - Error Metrics")
+        ax.legend(loc="best", fontsize=8)
+        ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.close()
+    print(f"  Saved: {output_path}")
+
+
+def plot_metrics_grid(
+    all_results: Dict[str, Dict[str, List[float]]],
+    distortion_configs: Dict[str, Tuple[List, str]],
+    output_path: Path,
+):
+    """Plot a grid comparing all distortions for metrics.
+
+    Args:
+        all_results: {distortion_name: {metric_name: [values...]}}
+        distortion_configs: {distortion_name: (x_values, x_label)}
+        output_path: Path to save the plot
+    """
+    n_distortions = len(all_results)
+    fig, axes = plt.subplots(n_distortions, 2, figsize=(14, 4 * n_distortions))
+
+    if n_distortions == 1:
+        axes = axes.reshape(1, -1)
+
+    for i, (dist_name, results) in enumerate(all_results.items()):
+        x_values, x_label = distortion_configs[dist_name]
+
+        # Left plot: dB metrics (PSNR, SSIM_dB, MS-SSIM_dB)
+        db_metrics = {k: v for k, v in results.items() if "dB" in k or k == "PSNR"}
+        for name, data in db_metrics.items():
+            axes[i, 0].plot(x_values, data, marker="o", label=name, markersize=3)
+        axes[i, 0].set_xlabel(x_label)
+        axes[i, 0].set_ylabel("Value (dB)")
+        axes[i, 0].set_title(f"{dist_name} - Quality Metrics (dB)")
+        axes[i, 0].legend(loc="best", fontsize=6)
+        axes[i, 0].grid(True, alpha=0.3)
+
+        # Right plot: similarity/error metrics
+        other_metrics = {
+            k: v for k, v in results.items() if "dB" not in k and k != "PSNR"
+        }
+        for name, data in other_metrics.items():
+            axes[i, 1].plot(x_values, data, marker="o", label=name, markersize=3)
+        axes[i, 1].set_xlabel(x_label)
+        axes[i, 1].set_ylabel("Value")
+        axes[i, 1].set_title(f"{dist_name} - Other Metrics")
+        axes[i, 1].legend(loc="best", fontsize=6)
+        axes[i, 1].grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.close()
+    print(f"  Saved: {output_path}")
+
+
 # ============================================================================
 # Main
 # ============================================================================
@@ -584,6 +811,11 @@ def main():
         loss_fns.update(dinov3_losses)
         print(f"  Loaded {len(dinov3_losses)} DINOv3 losses")
 
+    # Load metrics
+    print("\nLoading metrics...")
+    metric_fns = get_metrics(device)
+    print(f"  Loaded {len(metric_fns)} metrics")
+
     # Define distortion configurations
     distortions = {
         "JPEG_Compression": {
@@ -622,12 +854,14 @@ def main():
 
         # Store all results for this image
         all_results = {}
+        all_metric_results = {}
         distortion_configs = {}
 
         # Run each distortion
         for dist_name, dist_config in distortions.items():
             print(f"  Testing: {dist_name}")
 
+            # Evaluate losses (with gradients)
             results = evaluate_distortion(
                 loss_fns=loss_fns,
                 gt=gt,
@@ -636,14 +870,24 @@ def main():
                 distort_name=dist_name,
             )
 
+            # Evaluate metrics (no gradients)
+            metric_results = evaluate_distortion_metrics(
+                metric_fns=metric_fns,
+                gt=gt,
+                distort_fn=dist_config["fn"],
+                distort_levels=dist_config["levels"],
+                distort_name=dist_name,
+            )
+
             all_results[dist_name] = results
+            all_metric_results[dist_name] = metric_results
             distortion_configs[dist_name] = (
                 dist_config["levels"],
                 dist_config["x_label"],
             )
 
-            # Save individual plot
-            output_path = results_dir / img_name / f"{dist_name}.png"
+            # Save individual loss plot
+            output_path = results_dir / img_name / "losses" / f"{dist_name}.png"
             plot_results(
                 results=results,
                 x_values=dist_config["levels"],
@@ -652,9 +896,22 @@ def main():
                 output_path=output_path,
             )
 
-        # Save combined grid plot
-        grid_path = results_dir / img_name / "all_distortions.png"
+            # Save individual metric plot
+            metric_output_path = results_dir / img_name / "metrics" / f"{dist_name}.png"
+            plot_metrics(
+                results=metric_results,
+                x_values=dist_config["levels"],
+                x_label=dist_config["x_label"],
+                title=f"{img_name} - {dist_name}",
+                output_path=metric_output_path,
+            )
+
+        # Save combined grid plots
+        grid_path = results_dir / img_name / "all_distortions_losses.png"
         plot_comparison_grid(all_results, distortion_configs, grid_path)
+
+        metrics_grid_path = results_dir / img_name / "all_distortions_metrics.png"
+        plot_metrics_grid(all_metric_results, distortion_configs, metrics_grid_path)
 
         # Generate pairwise comparison plots (perceptual vs Charbonnier)
         # Focus on comparing perceptual losses against Charbonnier
