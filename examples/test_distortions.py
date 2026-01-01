@@ -420,7 +420,7 @@ def plot_results(
         output_path: Path to save the plot
         log_scale_y: Whether to use log scale for y-axis
     """
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 8))
 
     # Plot loss values
     for name, data in results.items():
@@ -466,7 +466,7 @@ def plot_comparison_grid(
         output_path: Path to save the plot
     """
     n_distortions = len(all_results)
-    fig, axes = plt.subplots(n_distortions, 2, figsize=(14, 4 * n_distortions))
+    fig, axes = plt.subplots(n_distortions, 2, figsize=(14, 6 * n_distortions))
 
     if n_distortions == 1:
         axes = axes.reshape(1, -1)
@@ -771,7 +771,7 @@ def main():
         "--image", type=str, default=None, help="Path to specific image to test"
     )
     parser.add_argument("--no-dinov3", action="store_true", help="Skip DINOv3 losses")
-    parser.add_argument("--max-size", type=int, default=256, help="Max image size")
+    parser.add_argument("--max-size", type=int, default=512, help="Max image size")
     args = parser.parse_args()
 
     device = torch.device(args.device)
