@@ -34,7 +34,7 @@ Example:
     >>> lpips_value = losses["lpips"]
 """
 
-from typing import Any, Dict, List, Literal, Tuple, Union
+from typing import Any, Literal
 
 import torch
 import torch.nn as nn
@@ -80,8 +80,8 @@ class SenseCraftLoss(nn.Module):
 
     def __init__(
         self,
-        loss_config: List[LossConfigInput],
-        input_range: Tuple[float, float] = (-1, 1),
+        loss_config: list[LossConfigInput],
+        input_range: tuple[float, float] = (-1, 1),
         mode: Literal["2d", "3d"] = "2d",
         return_dict: bool = True,
     ):
@@ -91,17 +91,17 @@ class SenseCraftLoss(nn.Module):
         self.return_dict = return_dict
 
         # Parse and validate loss config
-        self.loss_names: List[str] = []
-        self.loss_weights: Dict[str, float] = {}
+        self.loss_names: list[str] = []
+        self.loss_weights: dict[str, float] = {}
         self.loss_modules: nn.ModuleDict = nn.ModuleDict()
 
         # Group losses by required value range
-        self.unit_range_losses: List[str] = []  # Need [0, 1]
-        self.symmetric_range_losses: List[str] = []  # Need [-1, 1]
-        self.any_range_losses: List[str] = []  # Don't care
+        self.unit_range_losses: list[str] = []  # Need [0, 1]
+        self.symmetric_range_losses: list[str] = []  # Need [-1, 1]
+        self.any_range_losses: list[str] = []  # Don't care
 
         # Track 2D-only losses for 3D mode handling
-        self.is_2d_only: Dict[str, bool] = {}
+        self.is_2d_only: dict[str, bool] = {}
 
         for config in loss_config:
             name, weight, kwargs = parse_loss_config(config)
@@ -181,8 +181,11 @@ class SenseCraftLoss(nn.Module):
         return loss_value
 
     def forward(
-        self, input: torch.Tensor, target: torch.Tensor
-    ) -> Union[torch.Tensor, Dict[str, torch.Tensor]]:
+        self,
+        input: torch.Tensor,
+        target: torch.Tensor,
+        return_dict: bool | None = None,
+    ) -> torch.Tensor | dict[str, torch.Tensor]:
         """Compute compound loss.
 
         Args:
@@ -190,11 +193,16 @@ class SenseCraftLoss(nn.Module):
                 - 2D mode: (B, C, H, W)
                 - 3D mode: (B, T, C, H, W)
             target: Target tensor (same shape as input)
+            return_dict: If True, return dict with all losses. If False, return only total.
+                If None (default), uses the value set at initialization.
 
         Returns:
             If return_dict=True: Dict with "loss" (total) and individual losses
             If return_dict=False: Total weighted loss tensor
         """
+        if return_dict is None:
+            return_dict = self.return_dict
+
         device = input.device
         dtype = input.dtype
 
@@ -213,7 +221,7 @@ class SenseCraftLoss(nn.Module):
             target_symmetric = self._convert_to_symmetric_range(target)
 
         # Compute all losses
-        loss_dict: Dict[str, torch.Tensor] = {}
+        loss_dict: dict[str, torch.Tensor] = {}
         total_loss = torch.tensor(0.0, device=device, dtype=dtype)
 
         for name in self.loss_names:
@@ -247,13 +255,13 @@ class SenseCraftLoss(nn.Module):
 
         loss_dict["loss"] = total_loss
 
-        if self.return_dict:
+        if return_dict:
             return loss_dict
         else:
             return total_loss
 
     @staticmethod
-    def available_losses() -> List[str]:
+    def available_losses() -> list[str]:
         """Return list of available loss names."""
         return list_registered_losses()
 

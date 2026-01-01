@@ -120,6 +120,12 @@ class ViTDinoV3PerceptualLoss(nn.Module):
         # Store number of layers for negative indexing
         self.num_layers = len(self.model.layer)
 
+        # Truncate layers after target to save VRAM
+        target_layer = self._resolve_layer_index(loss_layer)
+        if target_layer < self.num_layers - 1:
+            self.model.layer = self.model.layer[: target_layer + 1]
+            self.num_layers = len(self.model.layer)
+
         # Register normalization parameters
         self.register_buffer(
             "mean", torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
