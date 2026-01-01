@@ -103,9 +103,6 @@ class PatchFFTLoss(nn.Module):
         patch_size: int = 8,
         loss_type: Literal["mse", "l1", "charbonnier"] = "mse",
         norm_type: NormType = NormType.LOG1P,
-        use_amplitude: bool = True,
-        use_phase: bool = False,
-        phase_weight: float = 0.1,
         eps: float = 1e-8,
         reduction: str = "mean",
     ):
@@ -114,10 +111,7 @@ class PatchFFTLoss(nn.Module):
         Args:
             patch_size: Size of patches to extract (e.g., 8 for 8x8 patches)
             loss_type: Type of loss to use on FFT features ('mse', 'l1', 'charbonnier')
-            norm_type: Normalization to apply to FFT magnitudes
-            use_amplitude: Whether to compute loss on amplitude/magnitude
-            use_phase: Whether to compute loss on phase
-            phase_weight: Weight for phase loss relative to amplitude loss
+            norm_type: Normalization to apply to FFT real/imag parts
             eps: Small constant for numerical stability
             reduction: Specifies the reduction to apply: 'none', 'mean', or 'sum'
         """
@@ -125,9 +119,6 @@ class PatchFFTLoss(nn.Module):
         self.patch_size = patch_size
         self.loss_type = loss_type
         self.norm_type = norm_type
-        self.use_amplitude = use_amplitude
-        self.use_phase = use_phase
-        self.phase_weight = phase_weight
         self.eps = eps
         self.reduction = reduction
 
@@ -164,38 +155,40 @@ class PatchFFTLoss(nn.Module):
 
     def compute_fft(
         self, patches: torch.Tensor
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
-        """Compute 2D FFT on patches and extract amplitude and optionally phase.
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Compute 2D FFT on patches and extract real and imaginary parts.
 
         Args:
             patches: Tensor of shape (B, C, nh, nw, ps, ps)
 
         Returns:
-            Tuple of (amplitude, phase) where phase may be None
+            Tuple of (real, imag) tensors
         """
         # Compute 2D FFT on last two dimensions (patch spatial dims)
         fft = torch.fft.fft2(patches, norm="ortho")
         fft_shifted = torch.fft.fftshift(fft, dim=(-2, -1))
 
-        # Compute amplitude (magnitude)
-        amplitude = torch.abs(fft_shifted)
+        # Extract real and imaginary parts separately
+        real = fft_shifted.real
+        imag = fft_shifted.imag
 
-        # Apply normalization to amplitude
+        # Apply normalization
         if self.norm_type == NormType.L2:
             # L2 normalize across spatial dimensions of each patch
-            norm = torch.norm(amplitude, dim=(-2, -1), keepdim=True) + self.eps
-            amplitude = amplitude / norm
+            real_norm = torch.norm(real, dim=(-2, -1), keepdim=True) + self.eps
+            imag_norm = torch.norm(imag, dim=(-2, -1), keepdim=True) + self.eps
+            real = real / real_norm
+            imag = imag / imag_norm
         elif self.norm_type == NormType.LOG:
-            amplitude = torch.log(amplitude + self.eps)
+            # For log, we need to handle negative values - use sign-preserving log
+            real = torch.sign(real) * torch.log(torch.abs(real) + self.eps)
+            imag = torch.sign(imag) * torch.log(torch.abs(imag) + self.eps)
         elif self.norm_type == NormType.LOG1P:
-            amplitude = torch.log1p(amplitude)
+            # Sign-preserving log1p
+            real = torch.sign(real) * torch.log1p(torch.abs(real))
+            imag = torch.sign(imag) * torch.log1p(torch.abs(imag))
 
-        # Compute phase if needed
-        phase = None
-        if self.use_phase:
-            phase = torch.angle(fft_shifted)
-
-        return amplitude, phase
+        return real, imag
 
     def compute_loss(
         self, input_feat: torch.Tensor, target_feat: torch.Tensor
@@ -232,35 +225,21 @@ class PatchFFTLoss(nn.Module):
         input_patches = self.extract_patches(input)
         target_patches = self.extract_patches(target)
 
-        # Compute FFT
-        input_amp, input_phase = self.compute_fft(input_patches)
-        target_amp, target_phase = self.compute_fft(target_patches)
+        # Compute FFT - returns (real, imag) parts
+        input_real, input_imag = self.compute_fft(input_patches)
+        target_real, target_imag = self.compute_fft(target_patches)
 
-        loss = torch.tensor(0.0, device=input.device, dtype=input.dtype)
+        # Compute loss on real and imaginary parts separately
+        real_loss = self.compute_loss(input_real, target_real)
+        imag_loss = self.compute_loss(input_imag, target_imag)
 
-        # Amplitude loss
-        if self.use_amplitude:
-            amp_loss = self.compute_loss(input_amp, target_amp)
-            if self.reduction == "mean":
-                loss = loss + amp_loss.mean()
-            elif self.reduction == "sum":
-                loss = loss + amp_loss.sum()
-            else:
-                loss = amp_loss
+        # Combine losses
+        loss = real_loss + imag_loss
 
-        # Phase loss
-        if self.use_phase and input_phase is not None and target_phase is not None:
-            # Phase is in [-pi, pi], use cosine similarity or direct difference
-            # Using 1 - cos(phase_diff) as phase loss
-            phase_diff = input_phase - target_phase
-            phase_loss = 1 - torch.cos(phase_diff)
-            if self.reduction == "mean":
-                loss = loss + self.phase_weight * phase_loss.mean()
-            elif self.reduction == "sum":
-                loss = loss + self.phase_weight * phase_loss.sum()
-            else:
-                loss = loss + self.phase_weight * phase_loss
-
+        if self.reduction == "mean":
+            return loss.mean()
+        elif self.reduction == "sum":
+            return loss.sum()
         return loss
 
 
@@ -275,9 +254,6 @@ class FFTLoss(nn.Module):
         self,
         loss_type: Literal["mse", "l1", "charbonnier"] = "mse",
         norm_type: NormType = NormType.LOG1P,
-        use_amplitude: bool = True,
-        use_phase: bool = False,
-        phase_weight: float = 0.1,
         eps: float = 1e-8,
         reduction: str = "mean",
     ):
@@ -285,58 +261,52 @@ class FFTLoss(nn.Module):
 
         Args:
             loss_type: Type of loss to use on FFT features ('mse', 'l1', 'charbonnier')
-            norm_type: Normalization to apply to FFT magnitudes
-            use_amplitude: Whether to compute loss on amplitude/magnitude
-            use_phase: Whether to compute loss on phase
-            phase_weight: Weight for phase loss relative to amplitude loss
+            norm_type: Normalization to apply to FFT real/imag parts
             eps: Small constant for numerical stability
             reduction: Specifies the reduction to apply: 'none', 'mean', or 'sum'
         """
         super().__init__()
         self.loss_type = loss_type
         self.norm_type = norm_type
-        self.use_amplitude = use_amplitude
-        self.use_phase = use_phase
-        self.phase_weight = phase_weight
         self.eps = eps
         self.reduction = reduction
 
         if loss_type == "charbonnier":
             self.charbonnier = CharbonnierLoss(eps=1e-6, reduction="none")
 
-    def compute_fft(
-        self, x: torch.Tensor
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
-        """Compute 2D FFT and extract amplitude and optionally phase.
+    def compute_fft(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Compute 2D FFT and extract real and imaginary parts.
 
         Args:
             x: Tensor of shape (B, C, H, W)
 
         Returns:
-            Tuple of (amplitude, phase) where phase may be None
+            Tuple of (real, imag) tensors
         """
         # Compute 2D FFT on spatial dimensions
         fft = torch.fft.fft2(x, norm="ortho")
         fft_shifted = torch.fft.fftshift(fft, dim=(-2, -1))
 
-        # Compute amplitude (magnitude)
-        amplitude = torch.abs(fft_shifted)
+        # Extract real and imaginary parts separately
+        real = fft_shifted.real
+        imag = fft_shifted.imag
 
-        # Apply normalization to amplitude
+        # Apply normalization
         if self.norm_type == NormType.L2:
-            norm = torch.norm(amplitude, dim=(-2, -1), keepdim=True) + self.eps
-            amplitude = amplitude / norm
+            real_norm = torch.norm(real, dim=(-2, -1), keepdim=True) + self.eps
+            imag_norm = torch.norm(imag, dim=(-2, -1), keepdim=True) + self.eps
+            real = real / real_norm
+            imag = imag / imag_norm
         elif self.norm_type == NormType.LOG:
-            amplitude = torch.log(amplitude + self.eps)
+            # Sign-preserving log
+            real = torch.sign(real) * torch.log(torch.abs(real) + self.eps)
+            imag = torch.sign(imag) * torch.log(torch.abs(imag) + self.eps)
         elif self.norm_type == NormType.LOG1P:
-            amplitude = torch.log1p(amplitude)
+            # Sign-preserving log1p
+            real = torch.sign(real) * torch.log1p(torch.abs(real))
+            imag = torch.sign(imag) * torch.log1p(torch.abs(imag))
 
-        # Compute phase if needed
-        phase = None
-        if self.use_phase:
-            phase = torch.angle(fft_shifted)
-
-        return amplitude, phase
+        return real, imag
 
     def compute_loss(
         self, input_feat: torch.Tensor, target_feat: torch.Tensor
@@ -361,33 +331,21 @@ class FFTLoss(nn.Module):
         Returns:
             FFT loss value
         """
-        # Compute FFT
-        input_amp, input_phase = self.compute_fft(input)
-        target_amp, target_phase = self.compute_fft(target)
+        # Compute FFT - returns (real, imag) parts
+        input_real, input_imag = self.compute_fft(input)
+        target_real, target_imag = self.compute_fft(target)
 
-        loss = torch.tensor(0.0, device=input.device, dtype=input.dtype)
+        # Compute loss on real and imaginary parts separately
+        real_loss = self.compute_loss(input_real, target_real)
+        imag_loss = self.compute_loss(input_imag, target_imag)
 
-        # Amplitude loss
-        if self.use_amplitude:
-            amp_loss = self.compute_loss(input_amp, target_amp)
-            if self.reduction == "mean":
-                loss = loss + amp_loss.mean()
-            elif self.reduction == "sum":
-                loss = loss + amp_loss.sum()
-            else:
-                loss = amp_loss
+        # Combine losses
+        loss = real_loss + imag_loss
 
-        # Phase loss
-        if self.use_phase and input_phase is not None and target_phase is not None:
-            phase_diff = input_phase - target_phase
-            phase_loss = 1 - torch.cos(phase_diff)
-            if self.reduction == "mean":
-                loss = loss + self.phase_weight * phase_loss.mean()
-            elif self.reduction == "sum":
-                loss = loss + self.phase_weight * phase_loss.sum()
-            else:
-                loss = loss + self.phase_weight * phase_loss
-
+        if self.reduction == "mean":
+            return loss.mean()
+        elif self.reduction == "sum":
+            return loss.sum()
         return loss
 
 

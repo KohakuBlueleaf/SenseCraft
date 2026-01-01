@@ -25,7 +25,7 @@ Example:
     >>> loss = temp_fft(pred_video, target_video)
 """
 
-from typing import Literal, Tuple, Optional
+from typing import Literal
 
 import torch
 import torch.nn as nn
@@ -548,9 +548,6 @@ class TemporalFFTLoss(nn.Module):
         self,
         loss_type: Literal["l1", "mse", "charbonnier"] = "mse",
         norm_type: NormType = NormType.LOG1P,
-        use_amplitude: bool = True,
-        use_phase: bool = False,
-        phase_weight: float = 0.1,
         eps: float = 1e-8,
         reduction: str = "mean",
     ):
@@ -558,19 +555,13 @@ class TemporalFFTLoss(nn.Module):
 
         Args:
             loss_type: Type of loss to compute
-            norm_type: Normalization for FFT magnitudes
-            use_amplitude: Whether to use amplitude loss
-            use_phase: Whether to use phase loss
-            phase_weight: Weight for phase loss
+            norm_type: Normalization for FFT real/imag parts
             eps: Small constant for numerical stability
             reduction: Reduction method
         """
         super().__init__()
         self.loss_type = loss_type
         self.norm_type = norm_type
-        self.use_amplitude = use_amplitude
-        self.use_phase = use_phase
-        self.phase_weight = phase_weight
         self.eps = eps
         self.reduction = reduction
 
@@ -579,35 +570,37 @@ class TemporalFFTLoss(nn.Module):
 
     def compute_temporal_fft(
         self, x: torch.Tensor
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """Compute FFT along temporal dimension.
 
         Args:
             x: Input tensor (B, T, C, H, W)
 
         Returns:
-            Tuple of (amplitude, phase)
+            Tuple of (real, imag) tensors
         """
         # FFT along temporal dimension (dim=1)
         fft = torch.fft.fft(x, dim=1, norm="ortho")
         fft_shifted = torch.fft.fftshift(fft, dim=1)
 
-        amplitude = torch.abs(fft_shifted)
+        # Extract real and imaginary parts separately
+        real = fft_shifted.real
+        imag = fft_shifted.imag
 
         # Apply normalization
         if self.norm_type == NormType.L2:
-            norm = torch.norm(amplitude, dim=1, keepdim=True) + self.eps
-            amplitude = amplitude / norm
+            real_norm = torch.norm(real, dim=1, keepdim=True) + self.eps
+            imag_norm = torch.norm(imag, dim=1, keepdim=True) + self.eps
+            real = real / real_norm
+            imag = imag / imag_norm
         elif self.norm_type == NormType.LOG:
-            amplitude = torch.log(amplitude + self.eps)
+            real = torch.sign(real) * torch.log(torch.abs(real) + self.eps)
+            imag = torch.sign(imag) * torch.log(torch.abs(imag) + self.eps)
         elif self.norm_type == NormType.LOG1P:
-            amplitude = torch.log1p(amplitude)
+            real = torch.sign(real) * torch.log1p(torch.abs(real))
+            imag = torch.sign(imag) * torch.log1p(torch.abs(imag))
 
-        phase = None
-        if self.use_phase:
-            phase = torch.angle(fft_shifted)
-
-        return amplitude, phase
+        return real, imag
 
     def forward(self, input: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         """Compute temporal FFT loss.
@@ -619,39 +612,26 @@ class TemporalFFTLoss(nn.Module):
         Returns:
             Temporal FFT loss value
         """
-        input_amp, input_phase = self.compute_temporal_fft(input)
-        target_amp, target_phase = self.compute_temporal_fft(target)
+        input_real, input_imag = self.compute_temporal_fft(input)
+        target_real, target_imag = self.compute_temporal_fft(target)
 
-        loss = torch.tensor(0.0, device=input.device, dtype=input.dtype)
+        # Compute loss on real and imaginary parts separately
+        if self.loss_type == "mse":
+            real_loss = F.mse_loss(input_real, target_real, reduction="none")
+            imag_loss = F.mse_loss(input_imag, target_imag, reduction="none")
+        elif self.loss_type == "l1":
+            real_loss = F.l1_loss(input_real, target_real, reduction="none")
+            imag_loss = F.l1_loss(input_imag, target_imag, reduction="none")
+        elif self.loss_type == "charbonnier":
+            real_loss = self.charbonnier(input_real, target_real)
+            imag_loss = self.charbonnier(input_imag, target_imag)
 
-        # Amplitude loss
-        if self.use_amplitude:
-            if self.loss_type == "mse":
-                amp_loss = F.mse_loss(input_amp, target_amp, reduction="none")
-            elif self.loss_type == "l1":
-                amp_loss = F.l1_loss(input_amp, target_amp, reduction="none")
-            elif self.loss_type == "charbonnier":
-                amp_loss = self.charbonnier(input_amp, target_amp)
+        loss = real_loss + imag_loss
 
-            if self.reduction == "mean":
-                loss = loss + amp_loss.mean()
-            elif self.reduction == "sum":
-                loss = loss + amp_loss.sum()
-            else:
-                loss = amp_loss
-
-        # Phase loss
-        if self.use_phase and input_phase is not None and target_phase is not None:
-            phase_diff = input_phase - target_phase
-            phase_loss = 1 - torch.cos(phase_diff)
-
-            if self.reduction == "mean":
-                loss = loss + self.phase_weight * phase_loss.mean()
-            elif self.reduction == "sum":
-                loss = loss + self.phase_weight * phase_loss.sum()
-            else:
-                loss = loss + self.phase_weight * phase_loss
-
+        if self.reduction == "mean":
+            return loss.mean()
+        elif self.reduction == "sum":
+            return loss.sum()
         return loss
 
 
@@ -665,7 +645,7 @@ class PatchFFT3DLoss(nn.Module):
 
     def __init__(
         self,
-        patch_size: Tuple[int, int, int] = (4, 8, 8),
+        patch_size: tuple[int, int, int] = (4, 8, 8),
         loss_type: Literal["mse", "l1", "charbonnier"] = "mse",
         norm_type: NormType = NormType.LOG1P,
         eps: float = 1e-8,
@@ -732,31 +712,43 @@ class PatchFFT3DLoss(nn.Module):
 
         return x
 
-    def compute_fft_3d(self, patches: torch.Tensor) -> torch.Tensor:
+    def compute_fft_3d(
+        self, patches: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """Compute 3D FFT on patches.
 
         Args:
             patches: Tensor (B, C, nt, nh, nw, pt, ph, pw)
 
         Returns:
-            FFT amplitude tensor
+            Tuple of (real, imag) tensors
         """
         # FFT on last 3 dimensions (pt, ph, pw)
         fft = torch.fft.fftn(patches, dim=(-3, -2, -1), norm="ortho")
         fft_shifted = torch.fft.fftshift(fft, dim=(-3, -2, -1))
 
-        amplitude = torch.abs(fft_shifted)
+        # Extract real and imaginary parts separately
+        real = fft_shifted.real
+        imag = fft_shifted.imag
 
         # Apply normalization
         if self.norm_type == NormType.L2:
-            norm = torch.norm(amplitude, dim=(-3, -2, -1), keepdim=True) + self.eps
-            amplitude = amplitude / norm
+            real_norm = (
+                torch.norm(real, dim=(-3, -2, -1), keepdim=True) + self.eps
+            )
+            imag_norm = (
+                torch.norm(imag, dim=(-3, -2, -1), keepdim=True) + self.eps
+            )
+            real = real / real_norm
+            imag = imag / imag_norm
         elif self.norm_type == NormType.LOG:
-            amplitude = torch.log(amplitude + self.eps)
+            real = torch.sign(real) * torch.log(torch.abs(real) + self.eps)
+            imag = torch.sign(imag) * torch.log(torch.abs(imag) + self.eps)
         elif self.norm_type == NormType.LOG1P:
-            amplitude = torch.log1p(amplitude)
+            real = torch.sign(real) * torch.log1p(torch.abs(real))
+            imag = torch.sign(imag) * torch.log1p(torch.abs(imag))
 
-        return amplitude
+        return real, imag
 
     def forward(self, input: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         """Compute 3D patch FFT loss.
@@ -772,24 +764,28 @@ class PatchFFT3DLoss(nn.Module):
         input_patches = self.extract_patches_3d(input)
         target_patches = self.extract_patches_3d(target)
 
-        # Compute FFT
-        input_fft = self.compute_fft_3d(input_patches)
-        target_fft = self.compute_fft_3d(target_patches)
+        # Compute FFT - returns (real, imag) parts
+        input_real, input_imag = self.compute_fft_3d(input_patches)
+        target_real, target_imag = self.compute_fft_3d(target_patches)
 
-        # Compute loss
+        # Compute loss on real and imaginary parts separately
         if self.loss_type == "mse":
-            loss = F.mse_loss(input_fft, target_fft, reduction="none")
+            real_loss = F.mse_loss(input_real, target_real, reduction="none")
+            imag_loss = F.mse_loss(input_imag, target_imag, reduction="none")
         elif self.loss_type == "l1":
-            loss = F.l1_loss(input_fft, target_fft, reduction="none")
+            real_loss = F.l1_loss(input_real, target_real, reduction="none")
+            imag_loss = F.l1_loss(input_imag, target_imag, reduction="none")
         elif self.loss_type == "charbonnier":
-            loss = self.charbonnier(input_fft, target_fft)
+            real_loss = self.charbonnier(input_real, target_real)
+            imag_loss = self.charbonnier(input_imag, target_imag)
+
+        loss = real_loss + imag_loss
 
         if self.reduction == "mean":
             return loss.mean()
         elif self.reduction == "sum":
             return loss.sum()
-        else:
-            return loss
+        return loss
 
 
 @register_loss("temporal_gradient", is_3d_only=True)
