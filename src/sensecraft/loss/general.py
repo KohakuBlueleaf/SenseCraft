@@ -24,14 +24,342 @@ Example:
     >>> loss = fft_loss(predicted, target)
 """
 
+import math
 from enum import Enum
-from typing import Literal, Tuple, Optional
+from typing import Literal
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 from .config import register_loss, ValueRange
+
+
+# =============================================================================
+# Standard Regression Losses
+# =============================================================================
+
+
+@register_loss("mse")
+class MSELoss(nn.Module):
+    """Mean Squared Error (L2) loss."""
+
+    def __init__(self, reduction: str = "mean"):
+        super().__init__()
+        self.reduction = reduction
+
+    def forward(self, input: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        loss = (input - target) ** 2
+        if self.reduction == "mean":
+            return loss.mean()
+        elif self.reduction == "sum":
+            return loss.sum()
+        return loss
+
+
+@register_loss("l1")
+class L1Loss(nn.Module):
+    """Mean Absolute Error (L1) loss."""
+
+    def __init__(self, reduction: str = "mean"):
+        super().__init__()
+        self.reduction = reduction
+
+    def forward(self, input: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        loss = torch.abs(input - target)
+        if self.reduction == "mean":
+            return loss.mean()
+        elif self.reduction == "sum":
+            return loss.sum()
+        return loss
+
+
+@register_loss("huber")
+class HuberLoss(nn.Module):
+    """Huber loss (Smooth L1).
+
+    L(x, y) = 0.5 * (x - y)^2 / delta,  if |x - y| < delta
+              |x - y| - 0.5 * delta,     otherwise
+    """
+
+    def __init__(self, delta: float = 1.0, reduction: str = "mean"):
+        super().__init__()
+        self.delta = delta
+        self.reduction = reduction
+
+    def forward(self, input: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        diff = torch.abs(input - target)
+        loss = torch.where(
+            diff < self.delta,
+            0.5 * diff**2 / self.delta,
+            diff - 0.5 * self.delta,
+        )
+        if self.reduction == "mean":
+            return loss.mean()
+        elif self.reduction == "sum":
+            return loss.sum()
+        return loss
+
+
+@register_loss("rmse")
+class RMSELoss(nn.Module):
+    """Root Mean Squared Error loss."""
+
+    def __init__(self, eps: float = 1e-8):
+        super().__init__()
+        self.eps = eps
+
+    def forward(self, input: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        mse = ((input - target) ** 2).mean()
+        return torch.sqrt(mse + self.eps)
+
+
+@register_loss("mape")
+class MAPELoss(nn.Module):
+    """Mean Absolute Percentage Error loss.
+
+    L(x, y) = |x - y| / |y|
+
+    Note: Can be unstable when target values are near zero.
+    """
+
+    def __init__(self, eps: float = 1e-8, reduction: str = "mean"):
+        super().__init__()
+        self.eps = eps
+        self.reduction = reduction
+
+    def forward(self, input: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        loss = torch.abs(input - target) / (torch.abs(target) + self.eps)
+        if self.reduction == "mean":
+            return loss.mean()
+        elif self.reduction == "sum":
+            return loss.sum()
+        return loss
+
+
+@register_loss("smape")
+class SMAPELoss(nn.Module):
+    """Symmetric Mean Absolute Percentage Error loss.
+
+    L(x, y) = 2 * |x - y| / (|x| + |y|)
+
+    More stable than MAPE when values are near zero.
+    """
+
+    def __init__(self, eps: float = 1e-8, reduction: str = "mean"):
+        super().__init__()
+        self.eps = eps
+        self.reduction = reduction
+
+    def forward(self, input: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        numerator = torch.abs(input - target)
+        denominator = torch.abs(input) + torch.abs(target) + self.eps
+        loss = 2.0 * numerator / denominator
+        if self.reduction == "mean":
+            return loss.mean()
+        elif self.reduction == "sum":
+            return loss.sum()
+        return loss
+
+
+@register_loss("log_cosh")
+class LogCoshLoss(nn.Module):
+    """Log-Cosh loss.
+
+    L(x, y) = log(cosh(x - y))
+
+    Behaves like L2 for small errors and L1 for large errors.
+    Smoother than Huber loss.
+    """
+
+    def __init__(self, reduction: str = "mean"):
+        super().__init__()
+        self.reduction = reduction
+
+    def forward(self, input: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        diff = input - target
+        # log(cosh(x)) = x + softplus(-2x) - log(2)
+        # This is more numerically stable than log(cosh(x)) directly
+        loss = diff + F.softplus(-2.0 * diff) - 0.6931471805599453  # log(2)
+        if self.reduction == "mean":
+            return loss.mean()
+        elif self.reduction == "sum":
+            return loss.sum()
+        return loss
+
+
+@register_loss("quantile")
+class QuantileLoss(nn.Module):
+    """Quantile (Pinball) loss.
+
+    For quantile q:
+    L(x, y) = q * max(y - x, 0) + (1 - q) * max(x - y, 0)
+
+    q=0.5 gives median regression (equivalent to L1).
+    """
+
+    def __init__(self, quantile: float = 0.5, reduction: str = "mean"):
+        super().__init__()
+        if not 0 < quantile < 1:
+            raise ValueError(f"Quantile must be in (0, 1), got {quantile}")
+        self.quantile = quantile
+        self.reduction = reduction
+
+    def forward(self, input: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        diff = target - input
+        loss = torch.max(self.quantile * diff, (self.quantile - 1) * diff)
+        if self.reduction == "mean":
+            return loss.mean()
+        elif self.reduction == "sum":
+            return loss.sum()
+        return loss
+
+
+# =============================================================================
+# Robust Regression Losses (Outlier-resistant)
+# =============================================================================
+
+
+@register_loss("cauchy")
+class CauchyLoss(nn.Module):
+    """Cauchy (Lorentzian) loss.
+
+    L(x, y) = log(1 + ((x - y) / c)^2)
+
+    Very robust to outliers. The scale parameter c controls sensitivity.
+    """
+
+    def __init__(self, scale: float = 1.0, reduction: str = "mean"):
+        super().__init__()
+        self.scale = scale
+        self.reduction = reduction
+
+    def forward(self, input: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        diff = (input - target) / self.scale
+        loss = torch.log1p(diff**2)
+        if self.reduction == "mean":
+            return loss.mean()
+        elif self.reduction == "sum":
+            return loss.sum()
+        return loss
+
+
+@register_loss("geman_mcclure")
+class GemanMcClureLoss(nn.Module):
+    """Geman-McClure loss.
+
+    L(x, y) = ((x - y) / c)^2 / (1 + ((x - y) / c)^2)
+
+    Bounded loss function, very robust to outliers.
+    """
+
+    def __init__(self, scale: float = 1.0, reduction: str = "mean"):
+        super().__init__()
+        self.scale = scale
+        self.reduction = reduction
+
+    def forward(self, input: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        diff_sq = ((input - target) / self.scale) ** 2
+        loss = diff_sq / (1 + diff_sq)
+        if self.reduction == "mean":
+            return loss.mean()
+        elif self.reduction == "sum":
+            return loss.sum()
+        return loss
+
+
+@register_loss("welsch")
+class WelschLoss(nn.Module):
+    """Welsch (Leclerc) loss.
+
+    L(x, y) = 1 - exp(-0.5 * ((x - y) / c)^2)
+
+    Bounded loss function with exponential decay for outliers.
+    """
+
+    def __init__(self, scale: float = 1.0, reduction: str = "mean"):
+        super().__init__()
+        self.scale = scale
+        self.reduction = reduction
+
+    def forward(self, input: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        diff_sq = ((input - target) / self.scale) ** 2
+        loss = 1 - torch.exp(-0.5 * diff_sq)
+        if self.reduction == "mean":
+            return loss.mean()
+        elif self.reduction == "sum":
+            return loss.sum()
+        return loss
+
+
+@register_loss("tukey")
+class TukeyBiweightLoss(nn.Module):
+    """Tukey's Biweight loss.
+
+    L(x, y) = (c^2 / 6) * (1 - (1 - ((x - y) / c)^2)^3),  if |x - y| <= c
+              c^2 / 6,                                     otherwise
+
+    Completely ignores outliers beyond the threshold c.
+    """
+
+    def __init__(self, c: float = 4.685, reduction: str = "mean"):
+        super().__init__()
+        self.c = c
+        self.c_sq_over_6 = c**2 / 6
+        self.reduction = reduction
+
+    def forward(self, input: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        diff = input - target
+        abs_diff = torch.abs(diff)
+        scaled = diff / self.c
+
+        # Inside threshold: rho = (c^2/6) * (1 - (1 - (x/c)^2)^3)
+        inside = self.c_sq_over_6 * (1 - (1 - scaled**2) ** 3)
+        # Outside threshold: rho = c^2/6
+        outside = torch.full_like(diff, self.c_sq_over_6)
+
+        loss = torch.where(abs_diff <= self.c, inside, outside)
+
+        if self.reduction == "mean":
+            return loss.mean()
+        elif self.reduction == "sum":
+            return loss.sum()
+        return loss
+
+
+@register_loss("wing")
+class WingLoss(nn.Module):
+    """Wing loss (from facial landmark detection).
+
+    L(x, y) = w * ln(1 + |x - y| / eps),  if |x - y| < w
+              |x - y| - C,                  otherwise
+
+    where C = w - w * ln(1 + w / eps)
+
+    Good for tasks requiring high precision for small errors.
+    """
+
+    def __init__(
+        self, width: float = 5.0, curvature: float = 0.5, reduction: str = "mean"
+    ):
+        super().__init__()
+        self.width = width
+        self.curvature = curvature
+        self.C = width - width * math.log(1 + width / curvature)
+        self.reduction = reduction
+
+    def forward(self, input: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        diff = torch.abs(input - target)
+        loss = torch.where(
+            diff < self.width,
+            self.width * torch.log1p(diff / self.curvature),
+            diff - self.C,
+        )
+        if self.reduction == "mean":
+            return loss.mean()
+        elif self.reduction == "sum":
+            return loss.sum()
+        return loss
 
 
 @register_loss("charbonnier")
@@ -45,7 +373,7 @@ class CharbonnierLoss(nn.Module):
     smoothness near zero.
     """
 
-    def __init__(self, eps: float = 1e-6, reduction: str = "mean"):
+    def __init__(self, eps: float = 1e-3, reduction: str = "mean"):
         """Initialize Charbonnier loss.
 
         Args:
@@ -361,7 +689,7 @@ class GaussianNoiseLoss(nn.Module):
     def __init__(
         self,
         sigma: float = 0.1,
-        sigma_range: Optional[Tuple[float, float]] = None,
+        sigma_range: tuple[float, float] | None = None,
         loss_type: Literal["mse", "l1", "charbonnier"] = "l1",
         reduction: str = "mean",
     ):
