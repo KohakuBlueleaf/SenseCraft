@@ -326,23 +326,19 @@ class MSSSIMConfig(LossConfig):
 
 @dataclass
 class PatchFFTConfig(LossConfig):
-    """Config for Patch FFT loss.
+    """Config for Patch FFT loss (2D).
 
     Args:
         weight: Loss weight
         patch_size: Size of patches (e.g., 8 for 8x8)
         loss_type: "mse", "l1", or "charbonnier"
         norm_type: Normalization ("none", "l2", "log", "log1p")
-        use_phase: Whether to include phase loss
-        phase_weight: Weight for phase component
     """
 
     weight: float = 1.0
     patch_size: int = 8
     loss_type: str = "mse"
-    norm_type: str = "log1p"
-    use_phase: bool = False
-    phase_weight: float = 0.1
+    norm_type: str = "none"
 
     def get_name(self) -> str:
         return "patch_fft"
@@ -359,9 +355,45 @@ class PatchFFTConfig(LossConfig):
         return {
             "patch_size": self.patch_size,
             "loss_type": self.loss_type,
-            "norm_type": norm_map.get(self.norm_type, NormType.LOG1P),
-            "use_phase": self.use_phase,
-            "phase_weight": self.phase_weight,
+            "norm_type": norm_map.get(self.norm_type, NormType.NONE),
+        }
+
+
+@dataclass
+class PatchFFT3DConfig(LossConfig):
+    """Config for 3D Patch FFT loss (video).
+
+    Args:
+        weight: Loss weight
+        patch_size: Tuple of (temporal, height, width) patch sizes
+        loss_type: "mse", "l1", or "charbonnier"
+        norm_type: Normalization ("none", "l2", "log", "log1p")
+        skip_keyframe: If True, skip frame 0 before patching
+    """
+
+    weight: float = 1.0
+    patch_size: tuple = (8, 16, 16)
+    loss_type: str = "mse"
+    norm_type: str = "none"
+    skip_keyframe: bool = True
+
+    def get_name(self) -> str:
+        return "patch_fft_3d"
+
+    def get_kwargs(self) -> Dict[str, Any]:
+        from .general import NormType
+
+        norm_map = {
+            "none": NormType.NONE,
+            "l2": NormType.L2,
+            "log": NormType.LOG,
+            "log1p": NormType.LOG1P,
+        }
+        return {
+            "patch_size": self.patch_size,
+            "loss_type": self.loss_type,
+            "norm_type": norm_map.get(self.norm_type, NormType.NONE),
+            "skip_keyframe": self.skip_keyframe,
         }
 
 
@@ -373,20 +405,45 @@ def parse_loss_config(config: LossConfigInput) -> tuple[str, float, Dict[str, An
     """Parse a loss config into (name, weight, kwargs).
 
     Args:
-        config: Either a {name: weight} dict or a LossConfig instance
+        config: Either a {name: weight} dict, {name: (weight, kwargs)} dict,
+                or a LossConfig instance
 
     Returns:
         Tuple of (loss_name, weight, kwargs)
+
+    Examples:
+        >>> parse_loss_config({"mse": 1.0})
+        ("mse", 1.0, {})
+
+        >>> parse_loss_config({"patch_fft_3d": (0.1, {"patch_size": (8, 16, 16)})})
+        ("patch_fft_3d", 0.1, {"patch_size": (8, 16, 16)})
+
+        >>> parse_loss_config(GeneralConfig("patch_fft", weight=0.1, patch_size=16))
+        ("patch_fft", 0.1, {"patch_size": 16})
     """
     if isinstance(config, LossConfig):
         return config.get_name(), config.weight, config.get_kwargs()
     elif isinstance(config, dict):
-        # Simple {name: weight} format
+        # Dict format: {name: weight} or {name: (weight, kwargs)}
         if len(config) != 1:
             raise ValueError(
                 f"Dict config must have exactly one key (name), got: {config}"
             )
-        name, weight = next(iter(config.items()))
-        return name, weight, {}
+        name, value = next(iter(config.items()))
+
+        # Check if value is (weight, kwargs) tuple
+        if isinstance(value, (tuple, list)) and len(value) == 2:
+            weight, kwargs = value
+            if isinstance(weight, (int, float)) and isinstance(kwargs, dict):
+                return name, float(weight), kwargs
+
+        # Simple {name: weight} format
+        if isinstance(value, (int, float)):
+            return name, float(value), {}
+
+        raise ValueError(
+            f"Invalid dict config value for '{name}': expected float or (float, dict), "
+            f"got {type(value).__name__}"
+        )
     else:
         raise TypeError(f"Invalid config type: {type(config)}")

@@ -390,14 +390,14 @@ class PatchFFTLoss(nn.Module):
     Divides images into patches, computes FFT on each patch, and computes
     loss on the frequency domain representation.
 
-    The FFT magnitudes can be very large, so normalization is recommended.
+    Default behavior: raw FFT without normalization (matching ref.py style).
     """
 
     def __init__(
         self,
         patch_size: int = 8,
         loss_type: Literal["mse", "l1", "charbonnier"] = "mse",
-        norm_type: NormType = NormType.LOG1P,
+        norm_type: NormType = NormType.NONE,
         eps: float = 1e-8,
         reduction: str = "mean",
     ):
@@ -406,7 +406,7 @@ class PatchFFTLoss(nn.Module):
         Args:
             patch_size: Size of patches to extract (e.g., 8 for 8x8 patches)
             loss_type: Type of loss to use on FFT features ('mse', 'l1', 'charbonnier')
-            norm_type: Normalization to apply to FFT real/imag parts
+            norm_type: Normalization to apply to FFT real/imag parts (default: NONE)
             eps: Small constant for numerical stability
             reduction: Specifies the reduction to apply: 'none', 'mean', or 'sum'
         """
@@ -420,90 +420,6 @@ class PatchFFTLoss(nn.Module):
         if loss_type == "charbonnier":
             self.charbonnier = CharbonnierLoss(eps=1e-6, reduction="none")
 
-    def extract_patches(self, x: torch.Tensor) -> torch.Tensor:
-        """Extract non-overlapping patches from image tensor.
-
-        Args:
-            x: Input tensor of shape (B, C, H, W)
-
-        Returns:
-            Patches of shape (B, C, num_patches_h, num_patches_w, patch_size, patch_size)
-        """
-        B, C, H, W = x.shape
-        ps = self.patch_size
-
-        # Ensure dimensions are divisible by patch size
-        H_pad = (ps - H % ps) % ps
-        W_pad = (ps - W % ps) % ps
-        if H_pad > 0 or W_pad > 0:
-            x = F.pad(x, (0, W_pad, 0, H_pad), mode="reflect")
-
-        B, C, H, W = x.shape
-
-        # Reshape to extract patches
-        # (B, C, H, W) -> (B, C, H//ps, ps, W//ps, ps)
-        x = x.view(B, C, H // ps, ps, W // ps, ps)
-        # (B, C, H//ps, ps, W//ps, ps) -> (B, C, H//ps, W//ps, ps, ps)
-        x = x.permute(0, 1, 2, 4, 3, 5).contiguous()
-
-        return x
-
-    def compute_fft(self, patches: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        """Compute 2D FFT on patches and extract real and imaginary parts.
-
-        Args:
-            patches: Tensor of shape (B, C, nh, nw, ps, ps)
-
-        Returns:
-            Tuple of (real, imag) tensors
-        """
-        # Compute 2D FFT on last two dimensions (patch spatial dims)
-        fft = torch.fft.fft2(patches, norm="ortho")
-        fft_shifted = torch.fft.fftshift(fft, dim=(-2, -1))
-
-        # Extract real and imaginary parts separately
-        real = fft_shifted.real
-        imag = fft_shifted.imag
-
-        # Apply normalization
-        if self.norm_type == NormType.L2:
-            # L2 normalize across spatial dimensions of each patch
-            real_norm = torch.norm(real, dim=(-2, -1), keepdim=True) + self.eps
-            imag_norm = torch.norm(imag, dim=(-2, -1), keepdim=True) + self.eps
-            real = real / real_norm
-            imag = imag / imag_norm
-        elif self.norm_type == NormType.LOG:
-            # For log, we need to handle negative values - use sign-preserving log
-            real = torch.sign(real) * torch.log(torch.abs(real) + self.eps)
-            imag = torch.sign(imag) * torch.log(torch.abs(imag) + self.eps)
-        elif self.norm_type == NormType.LOG1P:
-            # Sign-preserving log1p
-            real = torch.sign(real) * torch.log1p(torch.abs(real))
-            imag = torch.sign(imag) * torch.log1p(torch.abs(imag))
-
-        return real, imag
-
-    def compute_loss(
-        self, input_feat: torch.Tensor, target_feat: torch.Tensor
-    ) -> torch.Tensor:
-        """Compute loss between two feature tensors.
-
-        Args:
-            input_feat: Input features
-            target_feat: Target features
-
-        Returns:
-            Loss value (unreduced)
-        """
-        if self.loss_type == "mse":
-            return F.mse_loss(input_feat, target_feat, reduction="none")
-        elif self.loss_type == "l1":
-            return F.l1_loss(input_feat, target_feat, reduction="none")
-        elif self.loss_type == "charbonnier":
-            return self.charbonnier(input_feat, target_feat)
-        else:
-            raise ValueError(f"Unknown loss type: {self.loss_type}")
-
     def forward(self, input: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         """Compute patch FFT loss.
 
@@ -514,19 +430,83 @@ class PatchFFTLoss(nn.Module):
         Returns:
             FFT loss value
         """
-        # Extract patches
-        input_patches = self.extract_patches(input)
-        target_patches = self.extract_patches(target)
+        B, C, H, W = input.shape
+        ps = self.patch_size
 
-        # Compute FFT - returns (real, imag) parts
-        input_real, input_imag = self.compute_fft(input_patches)
-        target_real, target_imag = self.compute_fft(target_patches)
+        # Ensure dimensions are divisible by patch size
+        H_pad = (ps - H % ps) % ps
+        W_pad = (ps - W % ps) % ps
+        if H_pad > 0 or W_pad > 0:
+            input = F.pad(input, (0, W_pad, 0, H_pad), mode="reflect")
+            target = F.pad(target, (0, W_pad, 0, H_pad), mode="reflect")
+
+        B, C, H, W = input.shape
+        nh, nw = H // ps, W // ps
+
+        # Reshape to extract patches: (B, C, H, W) -> (B, C, nh, ps, nw, ps)
+        input = input.view(B, C, nh, ps, nw, ps)
+        target = target.view(B, C, nh, ps, nw, ps)
+
+        # -> (B, C, nh, nw, ps, ps)
+        input = input.permute(0, 1, 2, 4, 3, 5).contiguous()
+        target = target.permute(0, 1, 2, 4, 3, 5).contiguous()
+
+        # Flatten for FFT: -> (B * C * nh * nw, ps, ps)
+        input = input.reshape(-1, ps, ps)
+        target = target.reshape(-1, ps, ps)
+
+        # Compute 2D FFT (no norm, matching ref.py style)
+        input_fft = torch.fft.fft2(input)
+        target_fft = torch.fft.fft2(target)
+
+        # Extract real and imaginary parts
+        input_real, input_imag = input_fft.real, input_fft.imag
+        target_real, target_imag = target_fft.real, target_fft.imag
+
+        # Apply optional normalization
+        if self.norm_type == NormType.L2:
+            input_real = input_real / (
+                torch.norm(input_real, dim=(-2, -1), keepdim=True) + self.eps
+            )
+            input_imag = input_imag / (
+                torch.norm(input_imag, dim=(-2, -1), keepdim=True) + self.eps
+            )
+            target_real = target_real / (
+                torch.norm(target_real, dim=(-2, -1), keepdim=True) + self.eps
+            )
+            target_imag = target_imag / (
+                torch.norm(target_imag, dim=(-2, -1), keepdim=True) + self.eps
+            )
+        elif self.norm_type == NormType.LOG:
+            input_real = torch.sign(input_real) * torch.log(
+                torch.abs(input_real) + self.eps
+            )
+            input_imag = torch.sign(input_imag) * torch.log(
+                torch.abs(input_imag) + self.eps
+            )
+            target_real = torch.sign(target_real) * torch.log(
+                torch.abs(target_real) + self.eps
+            )
+            target_imag = torch.sign(target_imag) * torch.log(
+                torch.abs(target_imag) + self.eps
+            )
+        elif self.norm_type == NormType.LOG1P:
+            input_real = torch.sign(input_real) * torch.log1p(torch.abs(input_real))
+            input_imag = torch.sign(input_imag) * torch.log1p(torch.abs(input_imag))
+            target_real = torch.sign(target_real) * torch.log1p(torch.abs(target_real))
+            target_imag = torch.sign(target_imag) * torch.log1p(torch.abs(target_imag))
 
         # Compute loss on real and imaginary parts separately
-        real_loss = self.compute_loss(input_real, target_real)
-        imag_loss = self.compute_loss(input_imag, target_imag)
+        if self.loss_type == "mse":
+            real_loss = F.mse_loss(input_real, target_real, reduction="none")
+            imag_loss = F.mse_loss(input_imag, target_imag, reduction="none")
+        elif self.loss_type == "l1":
+            real_loss = F.l1_loss(input_real, target_real, reduction="none")
+            imag_loss = F.l1_loss(input_imag, target_imag, reduction="none")
+        elif self.loss_type == "charbonnier":
+            real_loss = self.charbonnier(input_real, target_real)
+            imag_loss = self.charbonnier(input_imag, target_imag)
 
-        # Combine losses
         loss = real_loss + imag_loss
 
         if self.reduction == "mean":
@@ -541,12 +521,14 @@ class FFTLoss(nn.Module):
     """Global FFT loss (no patching, operates on full image).
 
     Computes FFT on the entire image and computes loss on frequency domain.
+
+    Default behavior: raw FFT without normalization (matching ref.py style).
     """
 
     def __init__(
         self,
         loss_type: Literal["mse", "l1", "charbonnier"] = "mse",
-        norm_type: NormType = NormType.LOG1P,
+        norm_type: NormType = NormType.NONE,
         eps: float = 1e-8,
         reduction: str = "mean",
     ):
@@ -554,7 +536,7 @@ class FFTLoss(nn.Module):
 
         Args:
             loss_type: Type of loss to use on FFT features ('mse', 'l1', 'charbonnier')
-            norm_type: Normalization to apply to FFT real/imag parts
+            norm_type: Normalization to apply to FFT real/imag parts (default: NONE)
             eps: Small constant for numerical stability
             reduction: Specifies the reduction to apply: 'none', 'mean', or 'sum'
         """
@@ -567,53 +549,6 @@ class FFTLoss(nn.Module):
         if loss_type == "charbonnier":
             self.charbonnier = CharbonnierLoss(eps=1e-6, reduction="none")
 
-    def compute_fft(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        """Compute 2D FFT and extract real and imaginary parts.
-
-        Args:
-            x: Tensor of shape (B, C, H, W)
-
-        Returns:
-            Tuple of (real, imag) tensors
-        """
-        # Compute 2D FFT on spatial dimensions
-        fft = torch.fft.fft2(x, norm="ortho")
-        fft_shifted = torch.fft.fftshift(fft, dim=(-2, -1))
-
-        # Extract real and imaginary parts separately
-        real = fft_shifted.real
-        imag = fft_shifted.imag
-
-        # Apply normalization
-        if self.norm_type == NormType.L2:
-            real_norm = torch.norm(real, dim=(-2, -1), keepdim=True) + self.eps
-            imag_norm = torch.norm(imag, dim=(-2, -1), keepdim=True) + self.eps
-            real = real / real_norm
-            imag = imag / imag_norm
-        elif self.norm_type == NormType.LOG:
-            # Sign-preserving log
-            real = torch.sign(real) * torch.log(torch.abs(real) + self.eps)
-            imag = torch.sign(imag) * torch.log(torch.abs(imag) + self.eps)
-        elif self.norm_type == NormType.LOG1P:
-            # Sign-preserving log1p
-            real = torch.sign(real) * torch.log1p(torch.abs(real))
-            imag = torch.sign(imag) * torch.log1p(torch.abs(imag))
-
-        return real, imag
-
-    def compute_loss(
-        self, input_feat: torch.Tensor, target_feat: torch.Tensor
-    ) -> torch.Tensor:
-        """Compute loss between two feature tensors."""
-        if self.loss_type == "mse":
-            return F.mse_loss(input_feat, target_feat, reduction="none")
-        elif self.loss_type == "l1":
-            return F.l1_loss(input_feat, target_feat, reduction="none")
-        elif self.loss_type == "charbonnier":
-            return self.charbonnier(input_feat, target_feat)
-        else:
-            raise ValueError(f"Unknown loss type: {self.loss_type}")
-
     def forward(self, input: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         """Compute FFT loss.
 
@@ -624,15 +559,58 @@ class FFTLoss(nn.Module):
         Returns:
             FFT loss value
         """
-        # Compute FFT - returns (real, imag) parts
-        input_real, input_imag = self.compute_fft(input)
-        target_real, target_imag = self.compute_fft(target)
+        # Compute 2D FFT (no norm, matching ref.py style)
+        input_fft = torch.fft.fft2(input)
+        target_fft = torch.fft.fft2(target)
+
+        # Extract real and imaginary parts
+        input_real, input_imag = input_fft.real, input_fft.imag
+        target_real, target_imag = target_fft.real, target_fft.imag
+
+        # Apply optional normalization
+        if self.norm_type == NormType.L2:
+            input_real = input_real / (
+                torch.norm(input_real, dim=(-2, -1), keepdim=True) + self.eps
+            )
+            input_imag = input_imag / (
+                torch.norm(input_imag, dim=(-2, -1), keepdim=True) + self.eps
+            )
+            target_real = target_real / (
+                torch.norm(target_real, dim=(-2, -1), keepdim=True) + self.eps
+            )
+            target_imag = target_imag / (
+                torch.norm(target_imag, dim=(-2, -1), keepdim=True) + self.eps
+            )
+        elif self.norm_type == NormType.LOG:
+            input_real = torch.sign(input_real) * torch.log(
+                torch.abs(input_real) + self.eps
+            )
+            input_imag = torch.sign(input_imag) * torch.log(
+                torch.abs(input_imag) + self.eps
+            )
+            target_real = torch.sign(target_real) * torch.log(
+                torch.abs(target_real) + self.eps
+            )
+            target_imag = torch.sign(target_imag) * torch.log(
+                torch.abs(target_imag) + self.eps
+            )
+        elif self.norm_type == NormType.LOG1P:
+            input_real = torch.sign(input_real) * torch.log1p(torch.abs(input_real))
+            input_imag = torch.sign(input_imag) * torch.log1p(torch.abs(input_imag))
+            target_real = torch.sign(target_real) * torch.log1p(torch.abs(target_real))
+            target_imag = torch.sign(target_imag) * torch.log1p(torch.abs(target_imag))
 
         # Compute loss on real and imaginary parts separately
-        real_loss = self.compute_loss(input_real, target_real)
-        imag_loss = self.compute_loss(input_imag, target_imag)
+        if self.loss_type == "mse":
+            real_loss = F.mse_loss(input_real, target_real, reduction="none")
+            imag_loss = F.mse_loss(input_imag, target_imag, reduction="none")
+        elif self.loss_type == "l1":
+            real_loss = F.l1_loss(input_real, target_real, reduction="none")
+            imag_loss = F.l1_loss(input_imag, target_imag, reduction="none")
+        elif self.loss_type == "charbonnier":
+            real_loss = self.charbonnier(input_real, target_real)
+            imag_loss = self.charbonnier(input_imag, target_imag)
 
-        # Combine losses
         loss = real_loss + imag_loss
 
         if self.reduction == "mean":
