@@ -292,7 +292,9 @@ All losses can be used with `SenseCraftLoss` via their registered names:
 
 | Category | Names | Value Range |
 |----------|-------|-------------|
-| **Basic** | `mse`, `l1`, `charbonnier`, `smooth_l1` | ANY |
+| **Basic** | `mse`, `l1`, `huber`, `charbonnier` | ANY |
+| **Regression** | `rmse`, `mape`, `smape`, `log_cosh`, `quantile` | ANY |
+| **Robust** | `cauchy`, `geman_mcclure`, `welsch`, `tukey`, `wing` | ANY |
 | **FFT** | `fft`, `patch_fft`, `gaussian_noise` | ANY |
 | **Edge** | `sobel`, `laplacian`, `canny`, `gradient`, `high_freq`, `multi_scale_gradient`, `structure_tensor` | UNIT [0,1] |
 | **SSIM** | `ssim`, `ms_ssim` | UNIT [0,1] |
@@ -397,17 +399,15 @@ loss_fn = LPIPS(
 
 #### FFTLoss
 
-Global FFT loss operating on the entire image.
+Global FFT loss operating on the entire image. Computes loss on real and imaginary parts separately.
 
 ```python
-from sensecraft.loss import FFTLoss, NormType
+from sensecraft.loss import FFTLoss
+from sensecraft.loss.general import NormType
 
 loss_fn = FFTLoss(
     loss_type="mse",                # "mse", "l1", "charbonnier"
     norm_type=NormType.LOG1P,       # NONE, L2, LOG, LOG1P
-    use_amplitude=True,             # Loss on magnitude
-    use_phase=False,                # Loss on phase
-    phase_weight=0.1,               # Weight for phase loss
 )
 ```
 
@@ -416,39 +416,82 @@ loss_fn = FFTLoss(
 Patch-based FFT loss for local frequency analysis.
 
 ```python
-from sensecraft.loss import PatchFFTLoss, NormType
+from sensecraft.loss import PatchFFTLoss
+from sensecraft.loss.general import NormType
 
 loss_fn = PatchFFTLoss(
     patch_size=8,                   # 8x8 or 16x16 patches
     loss_type="l1",                 # "mse", "l1", "charbonnier"
-    norm_type=NormType.LOG1P,       # Normalization for FFT magnitudes
-    use_amplitude=True,
-    use_phase=False,
+    norm_type=NormType.LOG1P,       # Normalization for FFT real/imag parts
 )
 ```
 
 **Normalization Types:**
 - `NormType.NONE`: No normalization (may produce very large values)
 - `NormType.L2`: L2 normalization per patch
-- `NormType.LOG`: `log(x + eps)`
-- `NormType.LOG1P`: `log(1 + x)` (recommended)
+- `NormType.LOG`: Sign-preserving `sign(x) * log(|x| + eps)`
+- `NormType.LOG1P`: Sign-preserving `sign(x) * log(1 + |x|)` (recommended)
+
+> **Note:** FFT losses automatically cast inputs to fp32 to avoid ComplexHalf warnings with mixed precision training.
 
 ### General Losses
 
-#### CharbonnierLoss
-
-Smooth approximation to L1 loss, differentiable everywhere.
+#### Standard Regression Losses
 
 ```python
-from sensecraft.loss import CharbonnierLoss
-
-loss_fn = CharbonnierLoss(
-    eps=1e-6,           # Smoothness parameter
-    reduction="mean",   # "none", "mean", "sum"
+from sensecraft.loss import (
+    MSELoss,           # Mean Squared Error (L2)
+    L1Loss,            # Mean Absolute Error (L1)
+    HuberLoss,         # Smooth L1 / Huber loss
+    CharbonnierLoss,   # Differentiable L1 variant
+    RMSELoss,          # Root Mean Squared Error
+    MAPELoss,          # Mean Absolute Percentage Error
+    SMAPELoss,         # Symmetric MAPE (more stable near zero)
+    LogCoshLoss,       # Log-Cosh (smooth L1/L2 hybrid)
+    QuantileLoss,      # Pinball loss for quantile regression
 )
+
+# Huber loss (smooth L1)
+huber = HuberLoss(delta=1.0)  # Quadratic when |x-y| < delta, linear otherwise
+
+# Charbonnier loss (differentiable L1)
+charbonnier = CharbonnierLoss(eps=1e-3)  # L(x,y) = sqrt((x-y)^2 + eps^2)
+
+# Log-Cosh (behaves like L2 for small errors, L1 for large)
+log_cosh = LogCoshLoss()
+
+# Quantile loss (q=0.5 is equivalent to L1/median regression)
+quantile = QuantileLoss(quantile=0.5)
 ```
 
-The Charbonnier loss is defined as: `L(x, y) = sqrt((x - y)^2 + eps^2)`
+#### Robust Regression Losses (Outlier-resistant)
+
+These losses are designed to be robust against outliers:
+
+```python
+from sensecraft.loss import (
+    CauchyLoss,        # Cauchy/Lorentzian loss
+    GemanMcClureLoss,  # Bounded loss, very robust
+    WelschLoss,        # Bounded with exponential decay
+    TukeyBiweightLoss, # Completely ignores large outliers
+    WingLoss,          # High precision for small errors (facial landmarks)
+)
+
+# Cauchy loss: log(1 + ((x-y)/scale)^2)
+cauchy = CauchyLoss(scale=1.0)
+
+# Geman-McClure: bounded loss that saturates for large errors
+geman = GemanMcClureLoss(scale=1.0)
+
+# Welsch: 1 - exp(-0.5 * ((x-y)/scale)^2)
+welsch = WelschLoss(scale=1.0)
+
+# Tukey: completely ignores outliers beyond threshold c
+tukey = TukeyBiweightLoss(c=4.685)
+
+# Wing loss: high precision for small errors, linear for large
+wing = WingLoss(width=5.0, curvature=0.5)
+```
 
 #### GaussianNoiseLoss
 
@@ -525,7 +568,11 @@ loss = tfft(video_pred, video_target)
 |-----------|----------|-----------------|
 | **MSE** | Pixel-accurate reconstruction | Simple, can be blurry |
 | **L1** | General reconstruction | Less blurry than MSE |
-| **Charbonnier** | Restoration tasks | Smooth L1, robust to outliers |
+| **Huber** | Balanced reconstruction | Quadratic near zero, linear for large errors |
+| **Charbonnier** | Restoration tasks | Smooth L1, differentiable everywhere |
+| **Log-Cosh** | Smooth regression | Like L2 for small, L1 for large errors |
+| **Cauchy/Welsch/Tukey** | Noisy data | Robust to outliers, bounded influence |
+| **MAPE/SMAPE** | Relative error | Scale-invariant, good for varied magnitudes |
 | **SSIM/MS-SSIM** | Structural quality | Window-based, perceptually motivated |
 | **LPIPS** | Perceptual similarity | Learned, correlates with human perception |
 | **ConvNext** | Content matching | Multi-scale features |
