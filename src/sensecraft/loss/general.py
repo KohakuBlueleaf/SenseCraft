@@ -88,7 +88,7 @@ class NormType(Enum):
     LOG1P = "log1p"
 
 
-@register_loss("patch_fft", is_2d_only=True)
+@register_loss("patch_fft", is_2d_only=True, requires_fp32=True)
 class PatchFFTLoss(nn.Module):
     """Patch-based FFT loss for frequency domain comparison.
 
@@ -153,9 +153,7 @@ class PatchFFTLoss(nn.Module):
 
         return x
 
-    def compute_fft(
-        self, patches: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    def compute_fft(self, patches: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """Compute 2D FFT on patches and extract real and imaginary parts.
 
         Args:
@@ -243,7 +241,7 @@ class PatchFFTLoss(nn.Module):
         return loss
 
 
-@register_loss("fft", is_2d_only=True)
+@register_loss("fft", is_2d_only=True, requires_fp32=True)
 class FFTLoss(nn.Module):
     """Global FFT loss (no patching, operates on full image).
 

@@ -53,6 +53,7 @@ class LossInfo:
     required_range: ValueRange
     is_2d_only: bool = False
     is_3d_only: bool = False
+    requires_fp32: bool = False  # FFT losses need fp32 for proper complex support
 
 
 # Global registry
@@ -64,6 +65,7 @@ def register_loss(
     required_range: ValueRange = ValueRange.ANY,
     is_2d_only: bool = False,
     is_3d_only: bool = False,
+    requires_fp32: bool = False,
 ) -> Callable[[Type], Type]:
     """Decorator to register a loss class.
 
@@ -72,6 +74,7 @@ def register_loss(
         required_range: Required input value range
         is_2d_only: If True, only works with 2D input (applied per-frame in 3D)
         is_3d_only: If True, only works with 3D input
+        requires_fp32: If True, inputs will be cast to fp32 (for FFT losses)
 
     Example:
         >>> @register_loss("my_loss", ValueRange.UNIT, is_2d_only=True)
@@ -86,6 +89,7 @@ def register_loss(
             required_range=required_range,
             is_2d_only=is_2d_only,
             is_3d_only=is_3d_only,
+            requires_fp32=requires_fp32,
         )
         # Store the registered name on the class for reference
         cls._registered_name = name

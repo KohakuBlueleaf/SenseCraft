@@ -103,6 +103,9 @@ class SenseCraftLoss(nn.Module):
         # Track 2D-only losses for 3D mode handling
         self.is_2d_only: dict[str, bool] = {}
 
+        # Track losses that require fp32 (e.g., FFT losses)
+        self.requires_fp32: dict[str, bool] = {}
+
         for config in loss_config:
             name, weight, kwargs = parse_loss_config(config)
 
@@ -127,6 +130,7 @@ class SenseCraftLoss(nn.Module):
             self.loss_weights[name] = weight
             self.loss_modules[name] = loss_module
             self.is_2d_only[name] = info.is_2d_only
+            self.requires_fp32[name] = info.requires_fp32
 
             # Categorize by value range
             if info.required_range == ValueRange.UNIT:
@@ -168,6 +172,11 @@ class SenseCraftLoss(nn.Module):
             inp, tgt = input_symmetric, target_symmetric
         else:
             inp, tgt = input, target
+
+        # Cast to fp32 if required (for FFT losses)
+        if self.requires_fp32.get(name, False):
+            inp = inp.float()
+            tgt = tgt.float()
 
         # Handle 2D-only losses in 3D mode
         if self.mode == "3d" and self.is_2d_only[name]:

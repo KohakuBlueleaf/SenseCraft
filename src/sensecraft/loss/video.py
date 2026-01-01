@@ -536,7 +536,7 @@ class TemporalAccelerationLoss(nn.Module):
             raise ValueError(f"Unknown loss type: {self.loss_type}")
 
 
-@register_loss("temporal_fft", is_3d_only=True)
+@register_loss("temporal_fft", is_3d_only=True, requires_fp32=True)
 class TemporalFFTLoss(nn.Module):
     """Temporal FFT Loss.
 
@@ -635,7 +635,7 @@ class TemporalFFTLoss(nn.Module):
         return loss
 
 
-@register_loss("patch_fft_3d", is_3d_only=True)
+@register_loss("patch_fft_3d", is_3d_only=True, requires_fp32=True)
 class PatchFFT3DLoss(nn.Module):
     """3D Patch-based FFT Loss for spatio-temporal frequency analysis.
 
@@ -733,12 +733,8 @@ class PatchFFT3DLoss(nn.Module):
 
         # Apply normalization
         if self.norm_type == NormType.L2:
-            real_norm = (
-                torch.norm(real, dim=(-3, -2, -1), keepdim=True) + self.eps
-            )
-            imag_norm = (
-                torch.norm(imag, dim=(-3, -2, -1), keepdim=True) + self.eps
-            )
+            real_norm = torch.norm(real, dim=(-3, -2, -1), keepdim=True) + self.eps
+            imag_norm = torch.norm(imag, dim=(-3, -2, -1), keepdim=True) + self.eps
             real = real / real_norm
             imag = imag / imag_norm
         elif self.norm_type == NormType.LOG:
