@@ -33,17 +33,21 @@ class ViTDinoV3PerceptualLoss(nn.Module):
         self,
         model_type: ModelType = ModelType.SMALL_PLUS,
         use_gram: bool = True,
+        use_norm: bool = True,
         input_range: tuple[float, float] = (-1, 1),
+        loss_layer: int = -1,
     ):
         """Initialize perceptual loss module"""
         super().__init__()
 
         self.input_range = input_range
         self.use_gram = use_gram
+        self.use_norm = use_norm
+        self.loss_layer = loss_layer
 
         # Load pretrained ConvNext model
         model_name = model_type.value
-        self.model = DINOv3ViTModel.from_pretrained(model_name)
+        self.model: DINOv3ViTModel = DINOv3ViTModel.from_pretrained(model_name)
 
         # Register normalization parameters
         self.register_buffer(
@@ -52,6 +56,25 @@ class ViTDinoV3PerceptualLoss(nn.Module):
         self.register_buffer(
             "std", torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
         )
+
+    def dinov3_fwd(self, pixel_values: torch.Tensor) -> torch.Tensor:
+        pixel_values = pixel_values.to(
+            self.model.embeddings.patch_embeddings.weight.dtype
+        )
+        hidden_states = self.model.embeddings(pixel_values, bool_masked_pos=None)
+        position_embeddings = self.model.rope_embeddings(pixel_values)
+
+        for i, layer_module in enumerate(self.layer):
+            layer_head_mask = None
+            hidden_states = layer_module(
+                hidden_states,
+                attention_mask=layer_head_mask,
+                position_embeddings=position_embeddings,
+            )
+            if i == self.loss_layer:
+                return hidden_states
+
+        return hidden_states
 
     def normalize_input(self, x: torch.Tensor) -> torch.Tensor:
         """Normalize input tensor"""
@@ -80,9 +103,13 @@ class ViTDinoV3PerceptualLoss(nn.Module):
         input = self.normalize_input(input)
         target = self.normalize_input(target)
         with torch.enable_grad() if input.requires_grad else torch.no_grad():
-            x_feat = self.model(input).last_hidden_state
+            x_feat = self.dinov3_fwd(input)
         with torch.enable_grad() if target.requires_grad else torch.no_grad():
-            y_feat = self.model(target).last_hidden_state
+            y_feat = self.dinov3_fwd(input)
+
+        if self.use_norm:
+            x_feat = F.normalize(x_feat, dim=-1)
+            y_feat = F.normalize(y_feat, dim=-1)
 
         if self.use_gram:
             x_gram = self.gram_matrix(x_feat)
