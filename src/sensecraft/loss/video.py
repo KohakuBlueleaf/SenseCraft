@@ -708,7 +708,19 @@ class PatchFFT3DLoss(nn.Module):
         W_pad = (pw - W % pw) % pw
 
         if T_pad > 0 or H_pad > 0 or W_pad > 0:
-            x = F.pad(x, (0, W_pad, 0, H_pad, 0, T_pad), mode="replicate")
+            # F.pad for 5D (B, T, C, H, W) with size 6 pads last 3 dims: (W_l, W_r, H_t, H_b, C_l, C_r)
+            # But we don't want to pad C, so handle each dimension carefully
+            if H_pad > 0 or W_pad > 0:
+                # Reshape to 4D for padding: (B*T, C, H, W)
+                B, T, C, H, W = x.shape
+                x = x.view(B * T, C, H, W)
+                x = F.pad(x, (0, W_pad, 0, H_pad), mode="replicate")
+                _, C, H, W = x.shape
+                x = x.view(B, T, C, H, W)
+            if T_pad > 0:
+                # Pad T dimension by repeating the last frame
+                last_frame = x[:, -1:, :, :, :].expand(-1, T_pad, -1, -1, -1)
+                x = torch.cat([x, last_frame], dim=1)
 
         B, T, C, H, W = x.shape
 

@@ -21,7 +21,9 @@ dependencies = [
 urls = { "Homepage" = "https://kblueleaf.net/SenseCraft" }
 
 [project.optional-dependencies]
-dev = []
+dev = [
+    "pytest",
+]
 dinov3 = [
     "transformers>=4.56.0",
 ]
