@@ -527,7 +527,7 @@ class TemporalFFTLoss(nn.Module):
     def __init__(
         self,
         loss_type: Literal["l1", "mse", "charbonnier"] = "l1",
-        norm_type: NormType = NormType.NONE,
+        norm_type: NormType | str = NormType.NONE,
         amplitude_only: bool = True,
         eps: float = 1e-8,
         reduction: str = "mean",
@@ -536,14 +536,15 @@ class TemporalFFTLoss(nn.Module):
 
         Args:
             loss_type: Type of loss to compute
-            norm_type: Normalization for FFT components (default: NONE)
+            norm_type: Normalization for FFT components (default: NONE).
+                       Can be NormType enum or string ("none", "l2", "log", "log1p")
             amplitude_only: If True, only compare amplitudes (default: True, matching ref.py)
             eps: Small constant for numerical stability
             reduction: Reduction method
         """
         super().__init__()
         self.loss_type = loss_type
-        self.norm_type = norm_type
+        self.norm_type = NormType.from_str(norm_type)
         self.amplitude_only = amplitude_only
         self.eps = eps
         self.reduction = reduction
@@ -669,7 +670,7 @@ class PatchFFT3DLoss(nn.Module):
         self,
         patch_size: tuple[int, int, int] = (8, 16, 16),
         loss_type: Literal["mse", "l1", "charbonnier"] = "mse",
-        norm_type: NormType = NormType.NONE,
+        norm_type: NormType | str = NormType.NONE,
         skip_keyframe: bool = True,
         eps: float = 1e-8,
         reduction: str = "mean",
@@ -679,7 +680,8 @@ class PatchFFT3DLoss(nn.Module):
         Args:
             patch_size: Tuple of (temporal, height, width) patch sizes
             loss_type: Type of loss to compute
-            norm_type: Normalization for FFT real/imag (default: NONE for raw FFT)
+            norm_type: Normalization for FFT real/imag (default: NONE for raw FFT).
+                       Can be NormType enum or string ("none", "l2", "log", "log1p")
             skip_keyframe: If True, skip frame 0 (keyframe) before patching
             eps: Small constant for numerical stability
             reduction: Reduction method
@@ -687,7 +689,7 @@ class PatchFFT3DLoss(nn.Module):
         super().__init__()
         self.patch_size = patch_size
         self.loss_type = loss_type
-        self.norm_type = norm_type
+        self.norm_type = NormType.from_str(norm_type)
         self.skip_keyframe = skip_keyframe
         self.eps = eps
         self.reduction = reduction

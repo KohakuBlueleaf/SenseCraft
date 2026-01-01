@@ -382,6 +382,26 @@ class NormType(Enum):
     LOG = "log"
     LOG1P = "log1p"
 
+    @classmethod
+    def from_str(cls, value: "str | NormType") -> "NormType":
+        """Convert string to NormType enum.
+
+        Args:
+            value: String name or NormType enum
+
+        Returns:
+            NormType enum value
+        """
+        if isinstance(value, cls):
+            return value
+        if isinstance(value, str):
+            value_lower = value.lower()
+            for member in cls:
+                if member.value == value_lower or member.name.lower() == value_lower:
+                    return member
+            raise ValueError(f"Unknown NormType: {value}")
+        raise TypeError(f"Expected str or NormType, got {type(value)}")
+
 
 @register_loss("patch_fft", is_2d_only=True, requires_fp32=True)
 class PatchFFTLoss(nn.Module):
@@ -397,7 +417,7 @@ class PatchFFTLoss(nn.Module):
         self,
         patch_size: int = 8,
         loss_type: Literal["mse", "l1", "charbonnier"] = "mse",
-        norm_type: NormType = NormType.NONE,
+        norm_type: NormType | str = NormType.NONE,
         eps: float = 1e-8,
         reduction: str = "mean",
     ):
@@ -406,14 +426,15 @@ class PatchFFTLoss(nn.Module):
         Args:
             patch_size: Size of patches to extract (e.g., 8 for 8x8 patches)
             loss_type: Type of loss to use on FFT features ('mse', 'l1', 'charbonnier')
-            norm_type: Normalization to apply to FFT real/imag parts (default: NONE)
+            norm_type: Normalization to apply to FFT real/imag parts (default: NONE).
+                       Can be NormType enum or string ("none", "l2", "log", "log1p")
             eps: Small constant for numerical stability
             reduction: Specifies the reduction to apply: 'none', 'mean', or 'sum'
         """
         super().__init__()
         self.patch_size = patch_size
         self.loss_type = loss_type
-        self.norm_type = norm_type
+        self.norm_type = NormType.from_str(norm_type)
         self.eps = eps
         self.reduction = reduction
 
@@ -528,7 +549,7 @@ class FFTLoss(nn.Module):
     def __init__(
         self,
         loss_type: Literal["mse", "l1", "charbonnier"] = "mse",
-        norm_type: NormType = NormType.NONE,
+        norm_type: NormType | str = NormType.NONE,
         eps: float = 1e-8,
         reduction: str = "mean",
     ):
@@ -536,13 +557,14 @@ class FFTLoss(nn.Module):
 
         Args:
             loss_type: Type of loss to use on FFT features ('mse', 'l1', 'charbonnier')
-            norm_type: Normalization to apply to FFT real/imag parts (default: NONE)
+            norm_type: Normalization to apply to FFT real/imag parts (default: NONE).
+                       Can be NormType enum or string ("none", "l2", "log", "log1p")
             eps: Small constant for numerical stability
             reduction: Specifies the reduction to apply: 'none', 'mean', or 'sum'
         """
         super().__init__()
         self.loss_type = loss_type
-        self.norm_type = norm_type
+        self.norm_type = NormType.from_str(norm_type)
         self.eps = eps
         self.reduction = reduction
 
