@@ -21,7 +21,25 @@ from .lpips import LPIPS
 
 # General losses
 from .general import (
+    # Standard regression (PyTorch wrappers)
+    MSELoss,
+    L1Loss,
+    HuberLoss,
+    SmoothL1Loss,
+    # Custom regression
     CharbonnierLoss,
+    RMSELoss,
+    MAPELoss,
+    SMAPELoss,
+    LogCoshLoss,
+    QuantileLoss,
+    # Robust regression
+    CauchyLoss,
+    GemanMcClureLoss,
+    WelschLoss,
+    TukeyBiweightLoss,
+    WingLoss,
+    # FFT
     PatchFFTLoss,
     FFTLoss,
     NormType,

@@ -36,69 +36,36 @@ from .config import register_loss, ValueRange
 
 
 # =============================================================================
-# Standard Regression Losses
+# Standard Regression Losses (Wrappers around PyTorch builtins)
 # =============================================================================
 
 
 @register_loss("mse")
-class MSELoss(nn.Module):
-    """Mean Squared Error (L2) loss."""
+class MSELoss(nn.MSELoss):
+    """Mean Squared Error (L2) loss. Wrapper around nn.MSELoss."""
 
-    def __init__(self, reduction: str = "mean"):
-        super().__init__()
-        self.reduction = reduction
-
-    def forward(self, input: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-        loss = (input - target) ** 2
-        if self.reduction == "mean":
-            return loss.mean()
-        elif self.reduction == "sum":
-            return loss.sum()
-        return loss
+    pass
 
 
 @register_loss("l1")
-class L1Loss(nn.Module):
-    """Mean Absolute Error (L1) loss."""
+class L1Loss(nn.L1Loss):
+    """Mean Absolute Error (L1) loss. Wrapper around nn.L1Loss."""
 
-    def __init__(self, reduction: str = "mean"):
-        super().__init__()
-        self.reduction = reduction
-
-    def forward(self, input: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-        loss = torch.abs(input - target)
-        if self.reduction == "mean":
-            return loss.mean()
-        elif self.reduction == "sum":
-            return loss.sum()
-        return loss
+    pass
 
 
 @register_loss("huber")
-class HuberLoss(nn.Module):
-    """Huber loss (Smooth L1).
+class HuberLoss(nn.HuberLoss):
+    """Huber loss (Smooth L1). Wrapper around nn.HuberLoss."""
 
-    L(x, y) = 0.5 * (x - y)^2 / delta,  if |x - y| < delta
-              |x - y| - 0.5 * delta,     otherwise
-    """
+    pass
 
-    def __init__(self, delta: float = 1.0, reduction: str = "mean"):
-        super().__init__()
-        self.delta = delta
-        self.reduction = reduction
 
-    def forward(self, input: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-        diff = torch.abs(input - target)
-        loss = torch.where(
-            diff < self.delta,
-            0.5 * diff**2 / self.delta,
-            diff - 0.5 * self.delta,
-        )
-        if self.reduction == "mean":
-            return loss.mean()
-        elif self.reduction == "sum":
-            return loss.sum()
-        return loss
+@register_loss("smooth_l1")
+class SmoothL1Loss(nn.SmoothL1Loss):
+    """Smooth L1 loss. Wrapper around nn.SmoothL1Loss."""
+
+    pass
 
 
 @register_loss("rmse")
