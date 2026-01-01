@@ -307,7 +307,7 @@ def lpips(
         LPIPS distance (lower is better, 0 = identical)
     """
     model = _get_lpips_model(net, input.device)
-    return model(input, target).mean()
+    return model(input, target)
 
 
 # =============================================================================
@@ -494,4 +494,4 @@ class LPIPSMetric(nn.Module):
         Returns:
             LPIPS distance (lower is better)
         """
-        return self.lpips(input, target).mean()
+        return self.lpips(input, target)
