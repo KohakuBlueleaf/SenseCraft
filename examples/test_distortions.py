@@ -34,7 +34,7 @@ from sensecraft.loss import (
     FFTLoss,
     NormType,
 )
-from sensecraft.metrics import psnr, ssim, ms_ssim, rmse, mae, mape, lpips
+from sensecraft.metrics import psnr, ssim, ms_ssim, rmse, mae, lpips
 
 
 # ============================================================================
@@ -243,7 +243,6 @@ def get_metrics(device: torch.device) -> Dict[str, Callable]:
         "PSNR": lambda x, y: psnr(x, y, data_range=1.0),
         "RMSE": rmse,
         "MAE": mae,
-        "MAPE": mape,
     }
 
     # SSIM (regular and dB)
@@ -583,13 +582,11 @@ def plot_metrics(
     # Separate metrics into groups for better visualization
     # Group 1: dB metrics (PSNR, SSIM_dB, MS-SSIM_dB)
     # Group 2: 0-1 metrics (SSIM, MS-SSIM)
-    # Group 3: Error metrics (RMSE, MAE, MAPE, LPIPS) - lower is better
+    # Group 3: Error metrics (RMSE, MAE, LPIPS) - lower is better
 
     db_metrics = {k: v for k, v in results.items() if "dB" in k or k == "PSNR"}
     similarity_metrics = {k: v for k, v in results.items() if k in ["SSIM", "MS-SSIM"]}
-    error_metrics = {
-        k: v for k, v in results.items() if k in ["RMSE", "MAE", "MAPE", "LPIPS"]
-    }
+    error_metrics = {k: v for k, v in results.items() if k in ["RMSE", "MAE", "LPIPS"]}
 
     # Determine number of subplots needed
     n_plots = sum(

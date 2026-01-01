@@ -42,14 +42,8 @@ except ImportError:
     _ssim_fn = None
     _ms_ssim_fn = None
 
-try:
-    from lpips import LPIPS as _LPIPS
-
-    HAS_LPIPS = True
-except ImportError:
-    HAS_LPIPS = False
-    _LPIPS = None
-
+# Import our own LPIPS implementation
+from ..loss.lpips import LPIPS as _LPIPS
 
 # Global cache for LPIPS models (keyed by net type and device)
 _LPIPS_CACHE: Dict[str, Any] = {}
@@ -57,11 +51,6 @@ _LPIPS_CACHE: Dict[str, Any] = {}
 
 def _get_lpips_model(net: str, device: torch.device):
     """Get or create a cached LPIPS model for the given net type and device."""
-    if not HAS_LPIPS:
-        raise ImportError(
-            "lpips is required for LPIPS metric. Install with: pip install lpips"
-        )
-
     cache_key = f"{net}_{device}"
     if cache_key not in _LPIPS_CACHE:
         model = _LPIPS(net=net, verbose=False)
@@ -490,11 +479,6 @@ class LPIPSMetric(nn.Module):
         version: str = "0.1",
     ):
         super().__init__()
-        if not HAS_LPIPS:
-            raise ImportError(
-                "lpips is required for LPIPSMetric. " "Install with: pip install lpips"
-            )
-
         self.lpips = _LPIPS(net=net, version=version)
         # Freeze LPIPS model
         for param in self.lpips.parameters():
