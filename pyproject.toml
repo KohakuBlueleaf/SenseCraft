@@ -16,6 +16,7 @@ dependencies = [
     "torch",
     "torchvision",
     "numpy",
+    "pytorch-msssim",
 ]
 urls = { "Homepage" = "https://kblueleaf.net/SenseCraft" }
 
