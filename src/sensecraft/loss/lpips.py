@@ -187,7 +187,8 @@ class LPIPS(nn.Module):
         if retPerLayer:
             return (val, res)
         else:
-            return val
+            # Reduce to scalar by default (mean over batch and spatial dims)
+            return val.mean()
 
 
 class ScalingLayer(nn.Module):
