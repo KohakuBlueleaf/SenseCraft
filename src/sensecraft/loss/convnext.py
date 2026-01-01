@@ -29,6 +29,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.models
 
+from .config import register_loss, ValueRange
+
 
 class ConvNextType(Enum):
     """Available ConvNext model types from torchvision.
@@ -46,6 +48,7 @@ class ConvNextType(Enum):
     LARGE = "large"
 
 
+@register_loss("convnext", ValueRange.SYMMETRIC, is_2d_only=True)
 class ConvNextPerceptualLoss(nn.Module):
     """ConvNext-based perceptual loss using ImageNet-pretrained features.
 

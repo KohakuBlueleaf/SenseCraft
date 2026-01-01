@@ -50,6 +50,8 @@ import torch.nn.functional as F
 # Need 4.56.0 ^
 from transformers import DINOv3ConvNextModel
 
+from .config import register_loss, ValueRange
+
 
 class ConvNextType(Enum):
     """Available DINOv3 ConvNext model types from HuggingFace.
@@ -69,6 +71,7 @@ class ConvNextType(Enum):
     LARGE = "facebook/dinov3-convnext-large-pretrain-lvd1689m"
 
 
+@register_loss("dino_convnext", ValueRange.SYMMETRIC, is_2d_only=True)
 class ConvNextDinoV3PerceptualLoss(nn.Module):
     """ConvNext Perceptual Loss Module with DinoV3 ConvNext model
 

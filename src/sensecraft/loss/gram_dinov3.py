@@ -43,6 +43,8 @@ import torch.nn.functional as F
 # Need 4.56.0 ^
 from transformers import DINOv3ViTModel
 
+from .config import register_loss, ValueRange
+
 
 class ModelType(Enum):
     """Available DINOv3 ViT model types from HuggingFace.
@@ -63,6 +65,7 @@ class ModelType(Enum):
     LARGE = "facebook/dinov3-vitl16-pretrain-lvd1689m"
 
 
+@register_loss("dino_vit", ValueRange.SYMMETRIC, is_2d_only=True)
 class ViTDinoV3PerceptualLoss(nn.Module):
     """ViT-based perceptual loss using DINOv3 self-supervised features.
 

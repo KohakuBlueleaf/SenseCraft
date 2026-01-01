@@ -3,6 +3,7 @@ import torch.nn as nn
 from torch.autograd import Variable
 from ..modules import lpips_pretrained_net as pn
 from ..utils import lpips
+from .config import register_loss, ValueRange
 
 
 def spatial_average(in_tens, keepdim=True):
@@ -15,6 +16,7 @@ def upsample(in_tens, out_HW=(64, 64)):  # assumes scale factor is same for H an
 
 
 # Learned perceptual metric
+@register_loss("lpips", ValueRange.SYMMETRIC, is_2d_only=True)
 class LPIPS(nn.Module):
     def __init__(
         self,

@@ -10,6 +10,8 @@ Includes:
 - FFTLoss: Global frequency domain loss
 - GaussianNoiseLoss: Noise-aware loss for denoising tasks
 
+For edge and gradient-based losses, see the `edge` module.
+
 Example:
     >>> from sensecraft.loss import CharbonnierLoss, PatchFFTLoss
     >>>
@@ -29,7 +31,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from .config import register_loss, ValueRange
 
+
+@register_loss("charbonnier")
 class CharbonnierLoss(nn.Module):
     """Charbonnier loss (differentiable variant of L1 loss).
 
@@ -83,6 +88,7 @@ class NormType(Enum):
     LOG1P = "log1p"
 
 
+@register_loss("patch_fft", is_2d_only=True)
 class PatchFFTLoss(nn.Module):
     """Patch-based FFT loss for frequency domain comparison.
 
@@ -258,6 +264,7 @@ class PatchFFTLoss(nn.Module):
         return loss
 
 
+@register_loss("fft", is_2d_only=True)
 class FFTLoss(nn.Module):
     """Global FFT loss (no patching, operates on full image).
 
@@ -384,6 +391,7 @@ class FFTLoss(nn.Module):
         return loss
 
 
+@register_loss("gaussian_noise")
 class GaussianNoiseLoss(nn.Module):
     """Gaussian noise-aware loss for training denoising models.
 
