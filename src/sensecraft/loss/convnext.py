@@ -1,9 +1,24 @@
 """
-Modified from https://github.com/sypsyp97/convnext_perceptual_loss
-by sypsyp97
-Original code is licensed under the Apache License 2.0.
+ConvNext Perceptual Loss using torchvision pretrained models.
 
-This modified code is mainly for fixing gradient missing issue
+This module provides perceptual loss based on ConvNext features trained on ImageNet.
+It extracts multi-scale features from ConvNext blocks and computes either:
+- Direct MSE loss on feature maps
+- Gram matrix loss (L1) for texture/style matching
+
+Modified from https://github.com/sypsyp97/convnext_perceptual_loss by sypsyp97
+Original code is licensed under the Apache License 2.0.
+This modified code fixes gradient flow issues in the original implementation.
+
+Example:
+    >>> from sensecraft.loss import ConvNextPerceptualLoss
+    >>> loss_fn = ConvNextPerceptualLoss(
+    ...     model_type=ConvNextType.SMALL,
+    ...     feature_layers=[2, 4, 8, 14],
+    ...     use_gram=False,
+    ...     input_range=(0, 1),
+    ... )
+    >>> loss = loss_fn(predicted_image, target_image)
 """
 
 from enum import Enum
@@ -16,7 +31,14 @@ import torchvision.models
 
 
 class ConvNextType(Enum):
-    """Available ConvNext model types"""
+    """Available ConvNext model types from torchvision.
+
+    Attributes:
+        TINY: ConvNext-Tiny (~28M params)
+        SMALL: ConvNext-Small (~50M params)
+        BASE: ConvNext-Base (~89M params)
+        LARGE: ConvNext-Large (~198M params)
+    """
 
     TINY = "tiny"
     SMALL = "small"
@@ -25,7 +47,21 @@ class ConvNextType(Enum):
 
 
 class ConvNextPerceptualLoss(nn.Module):
-    """ConvNext Perceptual Loss Module"""
+    """ConvNext-based perceptual loss using ImageNet-pretrained features.
+
+    This loss extracts features from multiple layers of a pretrained ConvNext
+    model and computes the difference between predicted and target features.
+    It supports both direct feature matching (MSE) and Gram matrix matching (L1).
+
+    The model weights are frozen and the forward pass handles gradient flow
+    correctly to allow backpropagation through the input image.
+
+    Attributes:
+        mean: ImageNet mean for normalization
+        std: ImageNet std for normalization
+        feature_weights: Per-layer weights for loss computation
+        blocks: ConvNext blocks used for feature extraction
+    """
 
     mean: torch.Tensor
     std: torch.Tensor
@@ -40,7 +76,22 @@ class ConvNextPerceptualLoss(nn.Module):
         input_range: Tuple[float, float] = (-1, 1),
         layer_weight_decay: float = 1.0,
     ):
-        """Initialize perceptual loss module"""
+        """Initialize the ConvNext perceptual loss module.
+
+        Args:
+            model_type: Which ConvNext variant to use (TINY, SMALL, BASE, LARGE)
+            feature_layers: List of layer indices to extract features from.
+                ConvNext-Small has ~40 blocks, so valid indices are 0-39.
+            feature_weights: Optional explicit weights for each layer. If None,
+                weights are computed using exponential decay.
+            use_gram: If True, compute Gram matrix loss (good for style/texture).
+                If False, compute direct MSE loss on features.
+            input_range: Expected (min, max) range of input values. Common values:
+                - (-1, 1) for normalized inputs
+                - (0, 1) for standard image tensors
+            layer_weight_decay: Decay factor for automatic weight computation.
+                Higher values weight later layers more heavily.
+        """
         super().__init__()
 
         self.input_range = input_range
