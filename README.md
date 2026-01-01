@@ -4,9 +4,12 @@ A PyTorch framework providing various perceptual loss functions for image proces
 
 ## Features
 
+- **Compound Loss System**: `SenseCraftLoss` for easy multi-loss configuration with automatic value range handling
 - **Multiple Perceptual Loss Types**: ConvNext, DINOv3 (ConvNext & ViT), LPIPS
 - **Frequency Domain Losses**: FFT and Patch-FFT losses with configurable normalization
-- **General Losses**: Charbonnier, Gaussian noise-aware losses
+- **Edge & Structure Losses**: Sobel, Laplacian, Gradient, Structure Tensor losses
+- **Video/3D Losses**: Temporal SSIM, 3D SSIM, Frame Difference losses
+- **General Losses**: Charbonnier, SSIM, MS-SSIM, Gaussian noise-aware losses
 - **Self-Supervised Features**: DINOv3 models provide better generalization than supervised features
 - **Flexible Configuration**: Layer selection, normalization options, Gram matrix support
 - **Gradient Flow**: Proper gradient handling for training neural networks
@@ -33,20 +36,126 @@ pip install -e ".[full]"
 
 ## Quick Start
 
+### Using SenseCraftLoss (Recommended)
+
+The easiest way to use multiple losses is through `SenseCraftLoss`:
+
 ```python
 import torch
-from sensecraft.loss import (
-    ConvNextPerceptualLoss,
-    ConvNextDinoV3PerceptualLoss,
-    ViTDinoV3PerceptualLoss,
-    LPIPS,
-    CharbonnierLoss,
-    PatchFFTLoss,
+from sensecraft.loss import SenseCraftLoss
+
+# Simple configuration with {name: weight} format
+loss_fn = SenseCraftLoss(
+    loss_config=[
+        {"charbonnier": 1.0},    # Main reconstruction loss
+        {"sobel": 0.1},          # Edge preservation
+        {"ssim": 0.05},          # Structural similarity
+        {"lpips": 0.1},          # Perceptual quality
+    ],
+    input_range=(-1, 1),  # Your data's value range
+    mode="2d",            # "2d" for images, "3d" for video
 )
 
 # Create sample images
 predicted = torch.randn(1, 3, 256, 256)
 target = torch.randn(1, 3, 256, 256)
+
+# Compute all losses at once
+losses = loss_fn(predicted, target)
+print(losses["loss"])        # Total weighted loss (for backprop)
+print(losses["charbonnier"]) # Individual loss values
+print(losses["sobel"])
+```
+
+### Typed Configs for Complex Losses
+
+For losses with many parameters, use typed config classes:
+
+```python
+from sensecraft.loss import (
+    SenseCraftLoss,
+    DinoV3LossConfig,
+    LPIPSConfig,
+    PatchFFTConfig,
+)
+
+loss_fn = SenseCraftLoss(
+    loss_config=[
+        {"charbonnier": 1.0},
+        DinoV3LossConfig(
+            weight=0.1,
+            model_type="small_plus",
+            loss_layer=-4,
+            use_gram=False,
+            use_norm=True,
+        ),
+        LPIPSConfig(weight=0.05, net="alex"),
+        PatchFFTConfig(weight=0.05, patch_size=16),
+    ],
+    input_range=(-1, 1),
+)
+```
+
+### Monitoring Losses (weight=0)
+
+Losses with `weight=0` are computed under `torch.no_grad()` for efficiency but still returned:
+
+```python
+loss_fn = SenseCraftLoss(
+    loss_config=[
+        {"charbonnier": 1.0},
+        {"ssim": 0.0},      # Computed for logging, not in gradient
+        {"ms_ssim": 0.0},   # Same here
+    ],
+    input_range=(0, 1),
+)
+
+losses = loss_fn(pred, target)
+# losses["loss"] only includes charbonnier
+# losses["ssim"] and losses["ms_ssim"] available for logging
+```
+
+### 3D/Video Mode
+
+For video data (B, T, C, H, W), use `mode="3d"`. 2D-only losses are applied frame-by-frame:
+
+```python
+loss_fn = SenseCraftLoss(
+    loss_config=[
+        {"charbonnier": 1.0},
+        {"sobel": 0.1},           # Applied per-frame
+        {"temporal_gradient": 0.1},  # 3D-specific loss
+        {"stssim": 0.05},         # Spatio-temporal SSIM
+    ],
+    input_range=(-1, 1),
+    mode="3d",
+)
+
+video_pred = torch.randn(2, 8, 3, 64, 64)  # (B, T, C, H, W)
+video_target = torch.randn(2, 8, 3, 64, 64)
+losses = loss_fn(video_pred, video_target)
+```
+
+### Automatic Value Range Handling
+
+`SenseCraftLoss` automatically converts inputs to the required range for each loss:
+- **UNIT [0, 1]**: SSIM, MS-SSIM, edge losses (Sobel, Laplacian, etc.)
+- **SYMMETRIC [-1, 1]**: Perceptual losses (LPIPS, DINOv3, ConvNext)
+- **ANY**: Charbonnier, MSE, L1, FFT losses
+
+You just specify your data's range via `input_range`, and the conversion is handled automatically.
+
+### Using Individual Losses
+
+You can also use losses directly:
+
+```python
+from sensecraft.loss import (
+    ConvNextDinoV3PerceptualLoss,
+    CharbonnierLoss,
+    PatchFFTLoss,
+    SSIMLoss,
+)
 
 # Perceptual loss with DINOv3 ConvNext
 loss_fn = ConvNextDinoV3PerceptualLoss(
@@ -64,7 +173,40 @@ loss = charbonnier(predicted, target)
 # Patch FFT loss
 fft_loss = PatchFFTLoss(patch_size=8, loss_type="l1")
 loss = fft_loss(predicted, target)
+
+# SSIM loss (returns 1 - SSIM for minimization)
+ssim_loss = SSIMLoss(data_range=1.0)
+loss = ssim_loss(predicted, target)
 ```
+
+## Available Losses
+
+### Registered Loss Names
+
+All losses can be used with `SenseCraftLoss` via their registered names:
+
+| Category | Names | Value Range |
+|----------|-------|-------------|
+| **Basic** | `mse`, `l1`, `charbonnier`, `smooth_l1` | ANY |
+| **FFT** | `fft`, `patch_fft`, `gaussian_noise` | ANY |
+| **Edge** | `sobel`, `laplacian`, `canny`, `gradient`, `high_freq`, `multi_scale_gradient`, `structure_tensor` | UNIT [0,1] |
+| **SSIM** | `ssim`, `ms_ssim` | UNIT [0,1] |
+| **Perceptual** | `lpips`, `convnext`, `dino_convnext`, `dino_vit` | SYMMETRIC [-1,1] |
+| **Video/3D** | `ssim3d`, `stssim`, `tssim`, `fdb`, `temporal_accel`, `temporal_fft`, `patch_fft_3d`, `temporal_gradient` | varies |
+
+### Config Classes
+
+For complex losses, use typed config classes:
+
+| Config Class | Loss | Key Parameters |
+|--------------|------|----------------|
+| `GeneralConfig` | Any loss | `name`, `weight`, `**kwargs` |
+| `DinoV3LossConfig` | `dino_vit` | `model_type`, `loss_layer`, `use_gram`, `use_norm` |
+| `ConvNextDinoV3LossConfig` | `dino_convnext` | `model_type`, `loss_layer`, `use_gram`, `use_norm` |
+| `LPIPSConfig` | `lpips` | `net` ("vgg", "alex", "squeeze") |
+| `SSIMConfig` | `ssim` | `win_size`, `win_sigma` |
+| `MSSSIMConfig` | `ms_ssim` | `win_size`, `win_sigma`, `weights` |
+| `PatchFFTConfig` | `patch_fft` | `patch_size`, `loss_type`, `norm_type`, `use_phase` |
 
 ## Loss Functions
 
@@ -220,6 +362,58 @@ loss_fn = GaussianNoiseLoss(
 loss = loss_fn(predicted, target, add_noise_to_target=True)
 ```
 
+### Edge and Structure Losses
+
+Losses for preserving edges and structural details:
+
+```python
+from sensecraft.loss import (
+    SobelEdgeLoss,
+    LaplacianEdgeLoss,
+    GradientLoss,
+    MultiScaleGradientLoss,
+    StructureTensorLoss,
+)
+
+# Sobel edge loss
+sobel = SobelEdgeLoss(loss_type="l1")  # "l1", "mse", "charbonnier"
+loss = sobel(predicted, target)
+
+# Multi-scale gradient for coarse-to-fine edge matching
+msg = MultiScaleGradientLoss(num_scales=3)
+loss = msg(predicted, target)
+
+# Structure tensor for texture/orientation
+st = StructureTensorLoss(window_size=5, sigma=1.0)
+loss = st(predicted, target)
+```
+
+### Video/3D Losses
+
+Losses for temporal consistency in video:
+
+```python
+from sensecraft.loss import (
+    STSSIM,
+    TSSIM,
+    TemporalGradientLoss,
+    TemporalFFTLoss,
+    FDBLoss,
+)
+
+# Spatio-temporal SSIM
+stssim = STSSIM(spatial_weight=0.5, temporal_weight=0.5)
+loss = stssim(video_pred, video_target)  # (B, T, C, H, W)
+
+# Temporal gradient loss (frame differences)
+tg = TemporalGradientLoss(loss_type="l1")
+loss = tg(video_pred, video_target)
+
+# Temporal FFT for frequency consistency over time
+tfft = TemporalFFTLoss()
+loss = tfft(video_pred, video_target)
+```
+
 ## Comparison: When to Use Which Loss
 
 | Loss Type | Best For | Characteristics |
@@ -227,13 +421,17 @@ loss = loss_fn(predicted, target, add_noise_to_target=True)
 | **MSE** | Pixel-accurate reconstruction | Simple, can be blurry |
 | **L1** | General reconstruction | Less blurry than MSE |
 | **Charbonnier** | Restoration tasks | Smooth L1, robust to outliers |
+| **SSIM/MS-SSIM** | Structural quality | Window-based, perceptually motivated |
 | **LPIPS** | Perceptual similarity | Learned, correlates with human perception |
 | **ConvNext** | Content matching | Multi-scale features |
 | **DINOv3 ConvNext** | Semantic matching | Self-supervised, better generalization |
 | **DINOv3 ViT** | Global structure | Transformer-based, sequence features |
 | **FFT** | Frequency content | Captures textures, patterns |
 | **PatchFFT** | Local frequency | Better for high-frequency details |
-| **Gram Matrix** | Style/texture | Correlates feature channels |
+| **Sobel/Gradient** | Edge preservation | First-order derivatives |
+| **Laplacian** | Fine details | Second-order derivatives |
+| **Structure Tensor** | Texture orientation | Captures local anisotropy |
+| **Temporal losses** | Video consistency | Frame-to-frame coherence |
 
 ## Example: Testing Distortions
 
