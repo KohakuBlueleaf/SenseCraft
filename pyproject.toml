@@ -21,6 +21,16 @@ urls = { "Homepage" = "https://kblueleaf.net/SenseCraft" }
 
 [project.optional-dependencies]
 dev = []
+dinov3 = [
+    "transformers>=4.56.0",
+]
+full = [
+    "transformers>=4.56.0",
+    "scikit-image",
+]
 
 [tool.setuptools]
 package-dir = {"" = "src"}
+
+[tool.setuptools.package-data]
+sensecraft = ["loss/weights/**/*.pth"]
