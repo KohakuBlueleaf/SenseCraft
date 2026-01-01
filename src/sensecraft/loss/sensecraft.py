@@ -173,17 +173,16 @@ class SenseCraftLoss(nn.Module):
         else:
             inp, tgt = input, target
 
-        # Cast to fp32 if required (for FFT losses)
-        if self.requires_fp32.get(name, False):
-            inp = inp.float()
-            tgt = tgt.float()
-
         # Handle 2D-only losses in 3D mode
         if self.mode == "3d" and self.is_2d_only[name]:
             B, T, C, H, W = inp.shape
-            inp_2d = inp.reshape(B * T, C, H, W)
-            tgt_2d = tgt.reshape(B * T, C, H, W)
-            loss_value = loss_fn(inp_2d, tgt_2d)
+            inp = inp.reshape(B * T, C, H, W)
+            tgt = tgt.reshape(B * T, C, H, W)
+
+        # Compute loss with fp32 if required (disable autocast)
+        if self.requires_fp32.get(name, False):
+            with torch.autocast(device_type=inp.device.type, enabled=False):
+                loss_value = loss_fn(inp.float(), tgt.float())
         else:
             loss_value = loss_fn(inp, tgt)
 
