@@ -265,6 +265,41 @@ def mae(
     return ae
 
 
+def mape(
+    input: torch.Tensor,
+    target: torch.Tensor,
+    reduction: str = "mean",
+    eps: float = 1e-8,
+) -> torch.Tensor:
+    """Compute MAPE (Mean Absolute Percentage Error).
+
+    MAPE = mean(|(input - target) / target|)
+
+    This gives the average percentage error, making it scale-invariant.
+
+    Args:
+        input: Predicted tensor
+        target: Target tensor
+        reduction: 'mean', 'sum', or 'none'
+        eps: Small value to avoid division by zero
+
+    Returns:
+        MAPE value (lower is better, 0 = perfect, 1 = 100% average error)
+    """
+    input = input.contiguous()
+    target = target.contiguous()
+
+    # Compute |(input - target) / target| element-wise
+    relative_error = torch.abs((input - target) / (target + eps))
+    mape_val = relative_error.reshape(relative_error.shape[0], -1).mean(dim=1)
+
+    if reduction == "mean":
+        return mape_val.mean()
+    elif reduction == "sum":
+        return mape_val.sum()
+    return mape_val
+
+
 def lpips(
     input: torch.Tensor,
     target: torch.Tensor,
@@ -415,6 +450,21 @@ class MAE(nn.Module):
 
     def forward(self, input: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         return mae(input, target, self.reduction)
+
+
+class MAPE(nn.Module):
+    """Mean Absolute Percentage Error metric (class-based wrapper).
+
+    See `mape()` function for details.
+    """
+
+    def __init__(self, reduction: str = "mean", eps: float = 1e-8):
+        super().__init__()
+        self.reduction = reduction
+        self.eps = eps
+
+    def forward(self, input: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        return mape(input, target, self.reduction, self.eps)
 
 
 class LPIPSMetric(nn.Module):

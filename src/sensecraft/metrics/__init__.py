@@ -26,6 +26,7 @@ Available metrics:
 - ms_ssim / MSSSIM: Multi-Scale SSIM (0-1 or dB, higher is better)
 - rmse / RMSE: Root Mean Squared Error (lower is better)
 - mae / MAE: Mean Absolute Error (lower is better)
+- mape / MAPE: Mean Absolute Percentage Error (lower is better)
 - lpips / LPIPSMetric: Learned Perceptual similarity (lower is better)
 """
 
@@ -36,6 +37,7 @@ from .image import (
     ms_ssim,
     rmse,
     mae,
+    mape,
     lpips,
     # Class-based API
     PSNR,
@@ -43,6 +45,7 @@ from .image import (
     MSSSIM,
     RMSE,
     MAE,
+    MAPE,
     LPIPSMetric,
 )
 
@@ -53,6 +56,7 @@ __all__ = [
     "ms_ssim",
     "rmse",
     "mae",
+    "mape",
     "lpips",
     # Class-based API
     "PSNR",
@@ -60,5 +64,6 @@ __all__ = [
     "MSSSIM",
     "RMSE",
     "MAE",
+    "MAPE",
     "LPIPSMetric",
 ]
