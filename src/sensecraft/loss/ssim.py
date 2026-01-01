@@ -26,7 +26,7 @@ except ImportError:
     ms_ssim = None
 
 
-@register_loss("ssim", ValueRange.UNIT, is_2d_only=True)
+@register_loss("ssim", ValueRange.UNIT, is_2d_only=True, requires_fp32=True)
 class SSIMLoss(nn.Module):
     """SSIM Loss (1 - SSIM).
 
@@ -86,7 +86,7 @@ class SSIMLoss(nn.Module):
         return 1 - ssim_val
 
 
-@register_loss("ms_ssim", ValueRange.UNIT, is_2d_only=True)
+@register_loss("ms_ssim", ValueRange.UNIT, is_2d_only=True, requires_fp32=True)
 class MSSSIMLoss(nn.Module):
     """MS-SSIM Loss (1 - MS-SSIM).
 

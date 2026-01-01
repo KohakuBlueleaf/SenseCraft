@@ -101,7 +101,7 @@ def _create_gaussian_window_2d(
     return gauss_2d
 
 
-@register_loss("ssim3d", ValueRange.UNIT, is_3d_only=True)
+@register_loss("ssim3d", ValueRange.UNIT, is_3d_only=True, requires_fp32=True)
 class SSIM3D(nn.Module):
     """3D SSIM loss using volumetric Gaussian windows.
 
@@ -205,7 +205,7 @@ class SSIM3D(nn.Module):
             return loss
 
 
-@register_loss("stssim", ValueRange.UNIT, is_3d_only=True)
+@register_loss("stssim", ValueRange.UNIT, is_3d_only=True, requires_fp32=True)
 class STSSIM(nn.Module):
     """Spatio-Temporal SSIM combining spatial and temporal SSIM.
 
@@ -321,7 +321,7 @@ class STSSIM(nn.Module):
         return loss
 
 
-@register_loss("tssim", ValueRange.UNIT, is_3d_only=True)
+@register_loss("tssim", ValueRange.UNIT, is_3d_only=True, requires_fp32=True)
 class TSSIM(nn.Module):
     """Temporal SSIM focusing only on frame-to-frame consistency.
 

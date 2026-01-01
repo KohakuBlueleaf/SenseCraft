@@ -35,7 +35,7 @@ from .config import register_loss, ValueRange
 from .general import CharbonnierLoss
 
 
-@register_loss("sobel", ValueRange.UNIT, is_2d_only=True)
+@register_loss("sobel", ValueRange.UNIT, is_2d_only=True, requires_fp32=True)
 class SobelEdgeLoss(nn.Module):
     """Sobel edge detection loss.
 
@@ -117,7 +117,7 @@ class SobelEdgeLoss(nn.Module):
             raise ValueError(f"Unknown loss type: {self.loss_type}")
 
 
-@register_loss("laplacian", ValueRange.UNIT, is_2d_only=True)
+@register_loss("laplacian", ValueRange.UNIT, is_2d_only=True, requires_fp32=True)
 class LaplacianEdgeLoss(nn.Module):
     """Laplacian edge detection loss.
 
@@ -180,7 +180,7 @@ class LaplacianEdgeLoss(nn.Module):
             raise ValueError(f"Unknown loss type: {self.loss_type}")
 
 
-@register_loss("canny", ValueRange.UNIT, is_2d_only=True)
+@register_loss("canny", ValueRange.UNIT, is_2d_only=True, requires_fp32=True)
 class CannyStyleEdgeLoss(nn.Module):
     """Canny-style edge loss using gradient magnitude and direction.
 
@@ -257,7 +257,7 @@ class CannyStyleEdgeLoss(nn.Module):
             return diff_mag
 
 
-@register_loss("gradient", ValueRange.UNIT, is_2d_only=True)
+@register_loss("gradient", ValueRange.UNIT, is_2d_only=True, requires_fp32=True)
 class GradientLoss(nn.Module):
     """Direct gradient loss (first-order derivatives).
 
@@ -317,7 +317,7 @@ class GradientLoss(nn.Module):
         return loss_x + loss_y
 
 
-@register_loss("high_freq", ValueRange.UNIT, is_2d_only=True)
+@register_loss("high_freq", ValueRange.UNIT, is_2d_only=True, requires_fp32=True)
 class HighFrequencyLoss(nn.Module):
     """High-frequency emphasis loss using Gaussian high-pass filter.
 
@@ -398,7 +398,9 @@ class HighFrequencyLoss(nn.Module):
             raise ValueError(f"Unknown loss type: {self.loss_type}")
 
 
-@register_loss("multi_scale_gradient", ValueRange.UNIT, is_2d_only=True)
+@register_loss(
+    "multi_scale_gradient", ValueRange.UNIT, is_2d_only=True, requires_fp32=True
+)
 class MultiScaleGradientLoss(nn.Module):
     """Multi-scale gradient loss.
 
@@ -451,7 +453,7 @@ class MultiScaleGradientLoss(nn.Module):
         return total_loss
 
 
-@register_loss("structure_tensor", ValueRange.UNIT, is_2d_only=True)
+@register_loss("structure_tensor", ValueRange.UNIT, is_2d_only=True, requires_fp32=True)
 class StructureTensorLoss(nn.Module):
     """Structure tensor loss for texture and edge orientation.
 
