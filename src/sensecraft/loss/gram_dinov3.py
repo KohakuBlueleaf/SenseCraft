@@ -118,13 +118,13 @@ class ViTDinoV3PerceptualLoss(nn.Module):
         self.model: DINOv3ViTModel = DINOv3ViTModel.from_pretrained(model_name)
 
         # Store number of layers for negative indexing
-        self.num_layers = len(self.model.layer)
+        self.num_layers = len(self.model.model.layer)
 
         # Truncate layers after target to save VRAM
         target_layer = self._resolve_layer_index(loss_layer)
         if target_layer < self.num_layers - 1:
-            self.model.layer = self.model.layer[: target_layer + 1]
-            self.num_layers = len(self.model.layer)
+            self.model.model.layer = self.model.model.layer[: target_layer + 1]
+            self.num_layers = len(self.model.model.layer)
 
         # Register normalization parameters
         self.register_buffer(
@@ -150,7 +150,7 @@ class ViTDinoV3PerceptualLoss(nn.Module):
         # Resolve negative index to actual layer index
         target_layer = self._resolve_layer_index(self.loss_layer)
 
-        for i, layer_module in enumerate(self.model.layer):
+        for i, layer_module in enumerate(self.model.model.layer):
             layer_head_mask = None
             hidden_states = layer_module(
                 hidden_states,
