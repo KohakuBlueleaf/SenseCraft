@@ -143,8 +143,15 @@ class ConvNextDinoV3PerceptualLoss(nn.Module):
         model = DINOv3ConvNextModel.from_pretrained(model_name)
 
         # Extract blocks and ensure they're in eval mode
+        encoder = model if hasattr(model, "stages") else getattr(model, "model", None)
+        if encoder is None or not hasattr(encoder, "stages"):
+            raise AttributeError(
+                f"{type(model).__name__} does not expose ConvNeXt stages. "
+                "Expected .stages or .model.stages."
+            )
+
         self.blocks = nn.ModuleList()
-        for stage in model.stages:
+        for stage in encoder.stages:
             self.blocks.extend(stage.downsample_layers)
             self.blocks.extend(stage.layers)
 
