@@ -120,8 +120,18 @@ class ViTDinoV3PerceptualLoss(nn.Module):
         # Store number of layers for negative indexing
         self.num_layers = len(self.model.model.layer)
 
-        # Truncate layers after target to save VRAM
+        # Resolve the (possibly negative) index once, against the full model, and
+        # keep the result. The truncation below changes num_layers, so resolving the
+        # original negative index again later would select an earlier block.
         target_layer = self._resolve_layer_index(loss_layer)
+        if not 0 <= target_layer < self.num_layers:
+            raise ValueError(
+                f"loss_layer={loss_layer} is out of range for a model with "
+                f"{self.num_layers} layers"
+            )
+        self.loss_layer = target_layer
+
+        # Truncate layers after target to save VRAM
         if target_layer < self.num_layers - 1:
             self.model.model.layer = self.model.model.layer[: target_layer + 1]
             self.num_layers = len(self.model.model.layer)
@@ -147,8 +157,8 @@ class ViTDinoV3PerceptualLoss(nn.Module):
         hidden_states = self.model.embeddings(pixel_values, bool_masked_pos=None)
         position_embeddings = self.model.rope_embeddings(pixel_values)
 
-        # Resolve negative index to actual layer index
-        target_layer = self._resolve_layer_index(self.loss_layer)
+        # Already resolved against the full model in __init__
+        target_layer = self.loss_layer
 
         for i, layer_module in enumerate(self.model.model.layer):
             layer_head_mask = None
