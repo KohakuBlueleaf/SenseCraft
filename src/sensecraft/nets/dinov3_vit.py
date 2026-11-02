@@ -155,13 +155,32 @@ class Embeddings(nn.Module):
         self.patch_embeddings = nn.Conv2d(3, size, config.patch_size, config.patch_size)
 
     def forward(self, pixels: Tensor) -> Tensor:
-        patches = self.patch_embeddings(pixels).flatten(2).transpose(1, 2)
+        patches = self.embed_patches(pixels)
         batch = patches.shape[0]
         prefix = [
             self.cls_token.expand(batch, -1, -1),
             self.register_tokens.expand(batch, -1, -1),
         ]
         return torch.cat([*prefix, patches], dim=1)
+
+    def embed_patches(self, pixels: Tensor) -> Tensor:
+        """The patch conv as one matmul: patches never overlap, so each is a flat vector.
+
+        Same math as `patch_embeddings(pixels)`, as `(B, patches, hidden)` tokens in row order.
+        """
+        conv = self.patch_embeddings
+        size = conv.kernel_size[0]
+        batch, channels, height, width = pixels.shape
+        rows, cols = height // size, width // size
+
+        # (B, C, rows, size, cols, size) to (B, rows * cols, size * size * C)
+        cut = pixels[..., : rows * size, : cols * size]
+        flat = cut.reshape(batch, channels, rows, size, cols, size).permute(
+            0, 2, 4, 3, 5, 1
+        )
+        flat = flat.reshape(batch, rows * cols, size * size * channels)
+        weight = conv.weight.permute(0, 2, 3, 1).reshape(conv.out_channels, -1)
+        return F.linear(flat, weight, conv.bias)
 
 
 class DinoV3ViT(FeatureNet):

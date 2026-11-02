@@ -39,3 +39,14 @@ Stages that touch DINOv3 need `HF_HOME` pointing at a cache holding the gated ch
 stand-in with random weights; point `SENSECRAFT_CACHE` at a separate folder for stand-ins so their
 converted weights never reach the real cache. Every script runs with plain `python` and no
 arguments; its knobs are the UPPER_CASE globals at its top.
+
+## Tried and not kept
+
+Measured at batch 32, 256 px, bf16, channels-last, compiled per term, on one RTX 5090.
+
+| Change | Result | Why not kept |
+| --- | --- | --- |
+| DINOv3 q, k and v as one projection | 21.5 to 31.1 ms compiled | slower under compile |
+| Target forward on a second stream | 0.4 ms better than the same split graph, 1.5 ms worse than one compiled term | the split costs more fusion than the overlap gives |
+| Triton VGG block: pool code, routing, tap and ReLU masks inside the input-gradient kernel | 23.10 to 23.35 ms device time | the four-operand load costs what the removed passes saved |
+| Plain Triton 3x3 conv with bias and ReLU | ties cuDNN at 64 channels, 8 to 10% slower at 128 and 256 | no gain over cuDNN's fused op |

@@ -112,13 +112,15 @@ the prediction:
 
 | Term | 0.3.13 | now |
 | --- | --- | --- |
-| LPIPS VGG | 29.5 ms | 25.8 ms |
-| DINOv3 ViT-B | 21.5 ms | 21.5 ms |
+| LPIPS VGG | 29.5 ms | 23.3 ms |
+| DINOv3 ViT-B | 21.5 ms | 20.6 ms |
 | ConvNeXt small | | 8.6 ms |
 | DINOv3 ConvNeXt tiny | | 8.1 ms |
 
 LPIPS runs every conv, bias and ReLU as one cuDNN op with an input-only backward, since feature net
-weights never take gradients. The full numbers and per-layer floor ratios come from `measure/`.
+weights never take gradients; its heads are a channel sum inside the fused distance, and VGG's pools
+keep no indices (peak memory 2.8 to 1.8 GB). DINOv3 embeds patches with one matmul. The full
+numbers, per-layer floor ratios and the changes that were tried and dropped are in `measure/`.
 
 ## License
 

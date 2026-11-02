@@ -24,14 +24,16 @@ from terms import TERMS, ours
 DEVICE: str = "cuda:0"
 FP16_SCALE: float = 2.0**14  # the loss scale an fp16 run backs the value through
 KEYS: list[str] = list(TERMS)
+CHANNELS_LAST: bool = True  # the layout fused kernels need
 OUT: Path = REFS / "s2_nets.jsonl"
 
 
 def rows_of(name: str, ref: dict, term, features_of, dtype_name: str) -> list[dict]:
     """Precision rows of one term at one dtype: every tap, the input gradient, the value."""
     dtype = torch.float64 if dtype_name == "float64" else DTYPES[dtype_name]
-    net = term.to(DEVICE, dtype)
-    x = ref["input"].to(DEVICE, dtype)
+    layout = torch.channels_last if CHANNELS_LAST else torch.contiguous_format
+    net = term.to(DEVICE, dtype, memory_format=layout)
+    x = ref["input"].to(DEVICE, dtype).contiguous(memory_format=layout)
     truth = ref["float64"]
     base = ref[dtype_name]
 
