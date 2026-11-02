@@ -1,15 +1,27 @@
-"""
-SenseCraft: Unified Perceptual Feature Loss Framework.
+"""SenseCraft: perceptual and signal losses for image and video models.
 
-A PyTorch framework providing various perceptual loss functions and
-evaluation metrics for image/video processing tasks.
+from sensecraft import Loss, Term
 
-Submodules:
-- sensecraft.loss: Loss functions for training
-- sensecraft.metrics: Evaluation metrics
+loss = Loss([Term("mse"), Term("lpips", 0.5, net="vgg")]).prepare("cuda", torch.bfloat16)
+out = loss.value_and_seed(fake, real)
 """
 
-from . import loss
-from . import metrics
+# Importing the term packages registers every term
+from sensecraft import perceptual, pixel, signal
+from sensecraft.compose import Loss, Out, Term
+from sensecraft.prepare import prepare
+from sensecraft.registry import TERMS, Range, lookup, register
 
-__all__ = ["loss", "metrics"]
+__all__ = [
+    "TERMS",
+    "Loss",
+    "Out",
+    "Range",
+    "Term",
+    "lookup",
+    "perceptual",
+    "pixel",
+    "prepare",
+    "register",
+    "signal",
+]
