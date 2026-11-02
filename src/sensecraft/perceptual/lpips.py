@@ -1,5 +1,6 @@
 """LPIPS: a VGG16, AlexNet or SqueezeNet with the learned v0.1 heads."""
 
+import torch
 from torch import Tensor, nn
 
 from sensecraft.distance import lpips_distance
@@ -32,6 +33,9 @@ class LPIPS(nn.Module):
             self.backbone.load_state_dict(weights(source))
         self.backbone.freeze()
 
+        # Convs, pools and the channel reductions of the distance are fastest channels-last
+        self.backbone.to(memory_format=torch.channels_last)
+
         # Learned per-tap heads and the input scaling, as buffers so they follow `.to`
         for index in range(len(heads)):
             self.register_buffer(f"head{index}", heads[f"lins.{index}"])
@@ -43,8 +47,9 @@ class LPIPS(nn.Module):
         return [getattr(self, f"head{index}") for index in range(self.taps)]
 
     def features(self, x: Tensor) -> list[Tensor]:
-        """Backbone features of an image in [-1, 1]."""
-        return self.backbone(((x - self.shift) / self.scale).to(self.backbone.dtype))
+        """Backbone features of an image in [-1, 1], computed channels-last whatever its layout."""
+        scaled = ((x - self.shift) / self.scale).to(self.backbone.dtype)
+        return self.backbone(scaled.contiguous(memory_format=torch.channels_last))
 
     def distance(self, fake: list[Tensor], real: list[Tensor]) -> Tensor:
         """LPIPS between two feature lists of this backbone."""

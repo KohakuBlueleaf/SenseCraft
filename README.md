@@ -119,7 +119,8 @@ the prediction:
 
 LPIPS runs every conv, bias and ReLU as one cuDNN op with an input-only backward, since feature net
 weights never take gradients; its heads are a channel sum inside the fused distance, and VGG's pools
-keep no indices (peak memory 2.8 to 1.8 GB). DINOv3 embeds patches with one matmul. The full
+keep no indices (peak memory 2.8 to 1.8 GB). LPIPS runs channels-last inside whatever layout it
+is given; from NCHW input that is 36 ms otherwise. DINOv3 embeds patches with one matmul. The full
 numbers, per-layer floor ratios and the changes that were tried and dropped are in `measure/`.
 
 ## License

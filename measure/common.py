@@ -64,11 +64,14 @@ def input_gradient(
     return [f.detach() for f in features], grad.detach()
 
 
+def _plain(value: Tensor) -> Tensor:
+    """A CPU copy in plain row-major layout, whatever the source layout."""
+    return value.detach().cpu().clone(memory_format=torch.contiguous_format)
+
+
 def digest(tensors: dict[str, Tensor]) -> dict[str, str]:
     """A sha256 per tensor, for comparing two sets of weights exactly."""
     return {
-        key: hashlib.sha256(
-            value.detach().cpu().contiguous().view(torch.uint8).numpy()
-        ).hexdigest()
+        key: hashlib.sha256(_plain(value).view(torch.uint8).numpy()).hexdigest()
         for key, value in sorted(tensors.items())
     }
