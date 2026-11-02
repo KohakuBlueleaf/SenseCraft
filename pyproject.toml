@@ -4,36 +4,31 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sensecraft"
-version = "0.3.13"
-description = ""
+version = "0.4.0"
+description = "Perceptual and signal losses for image and video models"
 authors = [
     { name = "Shih-Ying Yeh(KohakuBlueLeaf)", email = "apolloyeh0123@gmail.com" },
 ]
 license = { text = "Apache-2.0" }
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.13"
 dependencies = [
-    "torch",
-    "torchvision",
-    "numpy",
+    "torch>=2.9",
+    "safetensors",
     "pytorch-msssim",
 ]
 urls = { "Homepage" = "https://kblueleaf.net/SenseCraft" }
 
 [project.optional-dependencies]
-dev = [
-    "pytest",
-]
-dinov3 = [
-    "transformers>=4.56.0",
-]
-full = [
-    "transformers>=4.56.0",
-    "scikit-image",
-]
+dinov3 = ["huggingface_hub"]
+dev = ["black", "ruff"]
 
 [tool.setuptools]
-package-dir = {"" = "src"}
+package-dir = { "" = "src" }
 
 [tool.setuptools.package-data]
-sensecraft = ["loss/weights/**/*.pth"]
+sensecraft = ["weights/*.safetensors"]
+
+[tool.ruff.lint.per-file-ignores]
+# Timing closures run inside the loop iteration that defines them
+"measure/*" = ["B023"]
