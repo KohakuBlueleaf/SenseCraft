@@ -4,6 +4,7 @@ The upstream file is read only on the first use, with `torch.hub` or `huggingfac
 loads read the converted file. `SENSECRAFT_CACHE` moves the cache.
 """
 
+import functools
 import json
 import os
 import re
@@ -19,6 +20,13 @@ from torch import Tensor
 from sensecraft.nets.convnext import TORCHVISION
 
 PACKAGED = Path(__file__).parent
+CONVERSION = (
+    1  # bump when a key map or reshape changes, so older conversions are not reused
+)
+
+# The process umask, read once: new cache files get the permissions a plain write would
+UMASK = os.umask(0)
+os.umask(UMASK)
 
 
 @dataclass(frozen=True)
@@ -155,6 +163,41 @@ def cache_dir() -> Path:
     return (Path(xdg) if xdg else Path.home() / ".cache") / "sensecraft"
 
 
+def _hub_path(repo: str, filename: str) -> Path:
+    """A file of a Hugging Face repo in the local hub cache, downloaded if needed."""
+    from huggingface_hub import hf_hub_download  # optional: only DINOv3 needs it
+
+    return Path(hf_hub_download(repo, filename))
+
+
+@functools.cache
+def revision(name: str) -> str:
+    """Which upstream file `name` comes from: the URL's file name, or the hub snapshot."""
+    source = SOURCES[name]
+    if source.url:
+        return Path(source.url).stem
+    return _hub_path(source.repo, "config.json").parent.name
+
+
+def _cached(name: str, suffix: str) -> Path:
+    """Cache path of `name`, keyed by upstream revision and conversion version."""
+    return cache_dir() / f"{name}-{revision(name)}-v{CONVERSION}{suffix}"
+
+
+def _write_atomic(path: Path, write) -> None:
+    """Write `path` through `write(temporary_path)`, then rename it into place.
+
+    Each writer has its own temporary file, so concurrent first uses never clash, and the
+    file gets the permissions a plain write would have.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle, partial = tempfile.mkstemp(dir=path.parent, suffix=".partial")
+    os.close(handle)
+    write(partial)
+    os.chmod(partial, 0o666 & ~UMASK)
+    os.replace(partial, path)
+
+
 def upstream(name: str) -> dict[str, Tensor]:
     """The upstream state dict of `name`, downloaded if needed."""
     source = SOURCES[name]
@@ -162,9 +205,7 @@ def upstream(name: str) -> dict[str, Tensor]:
         return torch.hub.load_state_dict_from_url(
             source.url, map_location="cpu", weights_only=True
         )
-    from huggingface_hub import hf_hub_download  # optional: only DINOv3 needs it
-
-    return load_file(hf_hub_download(source.repo, "model.safetensors"))
+    return load_file(_hub_path(source.repo, "model.safetensors"))
 
 
 def convert(name: str) -> dict[str, Tensor]:
@@ -180,27 +221,18 @@ def convert(name: str) -> dict[str, Tensor]:
 
 def weights(name: str) -> dict[str, Tensor]:
     """Converted weights of `name`, from the cache or converted now."""
-    path = cache_dir() / f"{name}.safetensors"
+    path = _cached(name, ".safetensors")
     if not path.exists():
-        # Each writer has its own temporary file; the last rename wins with identical bytes
-        path.parent.mkdir(parents=True, exist_ok=True)
-        handle, partial = tempfile.mkstemp(dir=path.parent, suffix=".partial")
-        os.close(handle)
-        save_file(convert(name), partial)
-        os.replace(partial, path)
+        _write_atomic(path, lambda partial: save_file(convert(name), partial))
     return load_file(str(path))
 
 
 def config(name: str) -> dict:
     """The `config.json` of a hub-sourced net, cached beside its weights."""
-    path = cache_dir() / f"{name}.json"
+    path = _cached(name, ".json")
     if not path.exists():
-        from huggingface_hub import hf_hub_download  # optional: only DINOv3 needs it
-
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            Path(hf_hub_download(SOURCES[name].repo, "config.json")).read_text()
-        )
+        text = _hub_path(SOURCES[name].repo, "config.json").read_text()
+        _write_atomic(path, lambda partial: Path(partial).write_text(text))
     return json.loads(path.read_text())
 
 

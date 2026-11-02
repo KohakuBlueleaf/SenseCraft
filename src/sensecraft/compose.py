@@ -25,13 +25,17 @@ class Term:
     monitor: bool = False
     kwargs: dict = field(default_factory=dict)
 
-    def __init__(self, name: str, weight: float = 1.0, monitor: bool = False, **kwargs):
-        self.name, self.weight, self.monitor, self.kwargs = (
-            name,
-            weight,
-            monitor,
-            kwargs,
-        )
+    def __init__(
+        self,
+        name: str,
+        weight: float = 1.0,
+        monitor: bool = False,
+        kwargs: dict | None = None,
+        **extra,
+    ):
+        # `kwargs` is the dataclass field, so `replace` and `asdict` round-trip; extras join it
+        self.name, self.weight, self.monitor = name, weight, monitor
+        self.kwargs = {**(kwargs or {}), **extra}
 
 
 @dataclass
@@ -129,6 +133,11 @@ class Loss(nn.Module):
         """Values, and the gradient of `scale * total` at `fake`; no graph is kept."""
         leaf = fake.detach().requires_grad_()
         out = self(leaf, real.detach())
-        (seed,) = torch.autograd.grad(out.total * scale, leaf)
+
+        # A loss with no trainable term, or terms that gave a constant, has a zero gradient
+        if out.total.requires_grad:
+            (seed,) = torch.autograd.grad(out.total * scale, leaf)
+        else:
+            seed = torch.zeros_like(fake)
         terms = {label: value.detach() for label, value in out.terms.items()}
         return Out(out.total.detach(), terms, seed)

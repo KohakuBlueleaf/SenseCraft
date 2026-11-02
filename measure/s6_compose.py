@@ -6,6 +6,7 @@ on the CPU in seconds.
     python measure/s6_compose.py
 """
 
+import dataclasses
 import sys
 from pathlib import Path
 
@@ -99,6 +100,17 @@ def main() -> None:
     out = loss.value_and_seed(fake, real, scale=4.0)
     check("seed equals the autograd gradient", torch.allclose(out.seed, expected))
     check("value_and_seed keeps no graph", out.total.grad_fn is None)
+
+    # A loss with nothing to differentiate gives a zero seed
+    out = Loss([Term("stub_unit_mean", monitor=True)]).value_and_seed(fake, real)
+    check("all-monitor loss gives a zero seed", bool((out.seed == 0).all()))
+
+    # A term survives dataclass helpers
+    term = dataclasses.replace(Term("stub_unit_mean", 2.0, extra=1), weight=3.0)
+    check(
+        "Term keeps its kwargs through replace",
+        term.kwargs == {"extra": 1} and term.weight == 3.0,
+    )
 
     # Video: image terms see frames, video terms see the clip
     clip_fake, clip_real = torch.rand(2, 5, 3, 8, 8), torch.rand(2, 5, 3, 8, 8)

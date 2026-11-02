@@ -50,12 +50,16 @@ def frozen_conv_relu(
     padding: tuple,
     fused: bool = True,
 ) -> Tensor:
-    """`relu(conv2d(x, weight, bias))` for frozen weights, fused on CUDA unless `fused` is off."""
+    """`relu(conv2d(x, weight, bias))`, fused on CUDA when nothing but `x` needs a gradient.
+
+    A weight or bias that takes a gradient, or `fused` off, runs the plain ops.
+    """
     if torch.is_autocast_enabled(x.device.type):
         dtype = torch.get_autocast_dtype(x.device.type)
         x, weight = x.to(dtype), weight.to(dtype)
         bias = bias.to(dtype) if bias is not None else None
-    plain = not fused or weight.requires_grad
+    trainable = weight.requires_grad or (bias is not None and bias.requires_grad)
+    plain = not fused or trainable
     if plain or x.device.type != "cuda" or x.dtype not in FUSED_DTYPES:
         return F.relu(F.conv2d(x, weight, bias, stride, padding))
     with torch.autocast(x.device.type, enabled=False):
