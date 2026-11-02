@@ -5,7 +5,6 @@ difference of two close unit vectors cancels to noise in bf16.
 """
 
 import torch
-import torch.nn.functional as F
 from torch import Tensor
 
 EPS = 1e-10
@@ -26,6 +25,8 @@ def lpips_distance(
         for fake_tap, real_tap, head in zip(fake, real, heads, strict=True):
             fake_unit = unit_channels(fake_tap.to(wide))
             real_unit = unit_channels(real_tap.to(wide))
+            # The head is a one-output 1x1 conv: a weighted channel sum, kept in the reduction
             squared = (fake_unit - real_unit).square()
-            total = total + F.conv2d(squared, head.to(wide)).mean(dim=(2, 3))
+            weighted = (squared * head.to(wide)).sum(dim=1, keepdim=True)
+            total = total + weighted.mean(dim=(2, 3))
     return total.mean()
