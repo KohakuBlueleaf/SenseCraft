@@ -16,8 +16,9 @@ Recorded files go to `measure/refs/`, which is not in git.
 | S2 | `s2_nets.py` | the same at fp32, bf16 and fp16 | fp64 reference, upstream at that dtype as baseline |
 | S5 record | `s5_record.py` | the 35 fixed losses at fp64, fp32 and bf16 | needs sensecraft 0.3.13 installed |
 | S5 | `s5_fixed.py` | value and input gradient of every fixed loss | the S5 record |
-| S6 | `s6_compose.py` | ranges, weights, monitors, video frames, `value_and_seed` | stub terms with known outputs |
+| S6 | `s6_compose.py` | ranges, weights, monitors, shift, video frames, `value_and_seed` | stub terms with known outputs |
 | S7 | `s7_near.py` | each perceptual term's gradient when the prediction is near the target, in fp16, bf16, TF32 and strict fp32 | fp64; draws `figures/s7_near.svg` from every recorded label |
+| S8 | `s8_shift.py` | how a random shift spreads a perceptual term's gradient: persistence over calls, peak and high-frequency share | the unshifted term |
 
 Rows report the max, mean and median of the relative and absolute error and the cosine, for the
 candidate and the baseline. `clear issue` marks a row at 10x the baseline, `large diff` at 2x. A mark
