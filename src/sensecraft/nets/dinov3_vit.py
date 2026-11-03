@@ -1,6 +1,8 @@
 """DINOv3 ViT: patch tokens with a class token and registers, rope attention, layer scale.
 
-Built from the checkpoint's own `config.json`, and only up to the deepest tapped layer.
+Built from the checkpoint's own `config.json`, and only up to the deepest tapped layer. Matmuls and
+attention run in the compute dtype; the residual stream, the norms, rope, the activation and the
+layer scales run in at least fp32, and the patch embedding keeps the image's low bits.
 """
 
 import math
@@ -10,6 +12,7 @@ import torch
 import torch.nn.functional as F
 from torch import Tensor, nn
 
+from sensecraft.kernels import compute_dtype, split_layer, wide
 from sensecraft.nets.base import FeatureNet
 
 
@@ -48,15 +51,23 @@ def rotate_half(x: Tensor) -> Tensor:
     return torch.cat((-second, first), dim=-1)
 
 
+def layer_norm(norm: nn.LayerNorm, x: Tensor) -> Tensor:
+    """`norm` applied in at least fp32, whatever dtype its weights are held in."""
+    x = wide(x)
+    weight, bias = norm.weight.to(x.dtype), norm.bias.to(x.dtype)
+    return F.layer_norm(x, norm.normalized_shape, weight, bias, norm.eps)
+
+
 class LayerScale(nn.Module):
-    """A learned per-channel scale."""
+    """A learned per-channel scale, applied in at least fp32."""
 
     def __init__(self, size: int):
         super().__init__()
         self.lambda1 = nn.Parameter(torch.ones(size))
 
     def forward(self, x: Tensor) -> Tensor:
-        return x * self.lambda1
+        x = wide(x)
+        return x * self.lambda1.to(x.dtype)
 
 
 class Attention(nn.Module):
@@ -98,7 +109,9 @@ class Attention(nn.Module):
 
     @staticmethod
     def _rotate(x: Tensor, cos: Tensor, sin: Tensor) -> Tensor:
-        return x * cos + rotate_half(x) * sin
+        """Rope in at least fp32, back in the dtype attention runs in."""
+        rotated = wide(x) * cos + rotate_half(wide(x)) * sin
+        return rotated.to(x.dtype)
 
 
 class MLP(nn.Module):
@@ -119,9 +132,12 @@ class MLP(nn.Module):
         self.act = ACTIVATIONS[config.hidden_act]
 
     def forward(self, x: Tensor) -> Tensor:
+        # The activation and the gate product in at least fp32, the projections in `x`'s dtype
         if self.gated:
-            return self.down_proj(self.act(self.gate_proj(x)) * self.up_proj(x))
-        return self.down_proj(self.act(self.up_proj(x)))
+            hidden = self.act(wide(self.gate_proj(x))) * wide(self.up_proj(x))
+        else:
+            hidden = self.act(wide(self.up_proj(x)))
+        return self.down_proj(hidden.to(x.dtype))
 
 
 class Layer(nn.Module):
@@ -138,8 +154,11 @@ class Layer(nn.Module):
         self.layer_scale2 = LayerScale(size)
 
     def forward(self, x: Tensor, cos: Tensor, sin: Tensor) -> Tensor:
-        x = x + self.layer_scale1(self.attention(self.norm1(x), cos, sin))
-        return x + self.layer_scale2(self.mlp(self.norm2(x)))
+        """`x` is the residual stream in at least fp32; each branch runs in the compute dtype."""
+        compute = compute_dtype(x, self.attention.q_proj.weight)
+        attended = self.attention(layer_norm(self.norm1, x).to(compute), cos, sin)
+        x = x + self.layer_scale1(attended)
+        return x + self.layer_scale2(self.mlp(layer_norm(self.norm2, x).to(compute)))
 
 
 class Embeddings(nn.Module):
@@ -158,15 +177,16 @@ class Embeddings(nn.Module):
         patches = self.embed_patches(pixels)
         batch = patches.shape[0]
         prefix = [
-            self.cls_token.expand(batch, -1, -1),
-            self.register_tokens.expand(batch, -1, -1),
+            self.cls_token.to(patches.dtype).expand(batch, -1, -1),
+            self.register_tokens.to(patches.dtype).expand(batch, -1, -1),
         ]
         return torch.cat([*prefix, patches], dim=1)
 
     def embed_patches(self, pixels: Tensor) -> Tensor:
         """The patch conv as one matmul: patches never overlap, so each is a flat vector.
 
-        Same math as `patch_embeddings(pixels)`, as `(B, patches, hidden)` tokens in row order.
+        Same math as `patch_embeddings(pixels)`, as `(B, patches, hidden)` tokens in row order,
+        in at least fp32 with the pixels' low bits kept.
         """
         conv = self.patch_embeddings
         size = conv.kernel_size[0]
@@ -180,7 +200,7 @@ class Embeddings(nn.Module):
         )
         flat = flat.reshape(batch, rows * cols, size * size * channels)
         weight = conv.weight.permute(0, 2, 3, 1).reshape(conv.out_channels, -1)
-        return F.linear(flat, weight, conv.bias)
+        return split_layer(F.linear, flat, weight, conv.bias)
 
 
 class DinoV3ViT(FeatureNet):
@@ -215,6 +235,7 @@ class DinoV3ViT(FeatureNet):
         return angles.cos().to(dtype), angles.sin().to(dtype)
 
     def forward(self, pixels: Tensor) -> list[Tensor]:
+        pixels = wide(pixels)
         patch = self.config.patch_size
         cos, sin = self.positions(
             pixels.shape[-2] // patch, pixels.shape[-1] // patch, pixels.dtype

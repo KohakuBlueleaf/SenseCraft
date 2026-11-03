@@ -1,9 +1,10 @@
 """Feature nets: frozen, they return the features at their taps and know nothing about losses."""
 
 import torch
+import torch.nn.functional as F
 from torch import Tensor, nn
 
-from sensecraft.kernels import frozen_conv_relu
+from sensecraft.kernels import compute_dtype, frozen_conv_relu, split_layer
 
 
 class FeatureNet(nn.Module):
@@ -48,6 +49,26 @@ class ConvReLU(nn.Conv2d):
         return frozen_conv_relu(x, self.weight, self.bias, self.stride, self.padding)
 
 
-def conv_relu(in_channels: int, out_channels: int, **conv) -> list[nn.Module]:
-    """A fused conv and ReLU, then a placeholder keeping torchvision's layer numbering."""
-    return [ConvReLU(in_channels, out_channels, **conv), nn.Identity()]
+class InputConvReLU(nn.Conv2d):
+    """The first conv and ReLU of a net: reads an fp32 image without rounding away its low bits.
+
+    The output is in the compute dtype, as the next layer reads it.
+    """
+
+    def forward(self, x: Tensor) -> Tensor:
+        def conv(image: Tensor, weight: Tensor, bias: Tensor | None) -> Tensor:
+            return F.conv2d(image, weight, bias, self.stride, self.padding)
+
+        out = F.relu(split_layer(conv, x, self.weight, self.bias))
+        return out.to(compute_dtype(x, self.weight))
+
+
+def conv_relu(
+    in_channels: int, out_channels: int, first: bool = False, **conv
+) -> list[nn.Module]:
+    """A conv and ReLU, then a placeholder keeping torchvision's layer numbering.
+
+    `first` marks the layer that reads the image; it keeps the image's low bits.
+    """
+    layer = InputConvReLU if first else ConvReLU
+    return [layer(in_channels, out_channels, **conv), nn.Identity()]

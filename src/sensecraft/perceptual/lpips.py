@@ -4,6 +4,7 @@ import torch
 from torch import Tensor, nn
 
 from sensecraft.distance import lpips_distance
+from sensecraft.kernels import wide
 from sensecraft.nets import alexnet, squeezenet, vgg16
 from sensecraft.registry import Range, register
 from sensecraft.weights import packaged, weights
@@ -47,8 +48,12 @@ class LPIPS(nn.Module):
         return [getattr(self, f"head{index}") for index in range(self.taps)]
 
     def features(self, x: Tensor) -> list[Tensor]:
-        """Backbone features of an image in [-1, 1], computed channels-last whatever its layout."""
-        scaled = ((x - self.shift) / self.scale).to(self.backbone.dtype)
+        """Backbone features of an image in [-1, 1], computed channels-last whatever its layout.
+
+        The scaled image stays in at least fp32; the first conv keeps its low bits in any compute dtype.
+        """
+        x = wide(x)
+        scaled = (x - self.shift.to(x.dtype)) / self.scale.to(x.dtype)
         return self.backbone(scaled.contiguous(memory_format=torch.channels_last))
 
     def distance(self, fake: list[Tensor], real: list[Tensor]) -> Tensor:

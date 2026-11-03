@@ -5,6 +5,7 @@ import re
 from torch import Tensor, nn
 
 from sensecraft.distance import feature_distance
+from sensecraft.kernels import wide
 from sensecraft.nets.dinov3_vit import DinoV3ViT, ViTConfig
 from sensecraft.registry import Range, register
 from sensecraft.weights import DINOV3_VIT, config, weights
@@ -58,10 +59,14 @@ class DinoV3ViTLoss(nn.Module):
         self.register_buffer("std", Tensor(STD).view(1, 3, 1, 1))
 
     def features(self, x: Tensor) -> list[Tensor]:
-        """Tokens of an image in [-1, 1]; a gray image is repeated to three channels."""
+        """Tokens of an image in [-1, 1]; a gray image is repeated to three channels.
+
+        The normalized image stays in at least fp32; the patch embedding keeps its low bits.
+        """
         if x.shape[1] == 1:
             x = x.repeat(1, 3, 1, 1)
-        return self.net((((x + 1) / 2 - self.mean) / self.std).to(self.net.dtype))
+        x = wide(x)
+        return self.net(((x + 1) / 2 - self.mean.to(x.dtype)) / self.std.to(x.dtype))
 
     def distance(self, fake: list[Tensor], real: list[Tensor]) -> Tensor:
         """The configured distance between two token lists of this net."""

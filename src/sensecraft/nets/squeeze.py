@@ -27,7 +27,7 @@ def squeezenet() -> TapSequence:
     """SqueezeNet 1.1 up to its last fire module; weights come from `sensecraft.weights`."""
     pool = nn.MaxPool2d(3, 2, ceil_mode=True)
     layers = [
-        *conv_relu(3, 64, kernel_size=3, stride=2),
+        *conv_relu(3, 64, first=True, kernel_size=3, stride=2),
         pool,
         Fire(64, 16, 64),
         Fire(128, 16, 64),

@@ -43,6 +43,6 @@ def vgg16() -> TapSequence:
         if item == "pool":
             layers.append(MaxPool2x2())
             continue
-        layers += conv_relu(channels, item, kernel_size=3, padding=1)
+        layers += conv_relu(channels, item, first=not layers, kernel_size=3, padding=1)
         channels = item
     return TapSequence(layers, TAPS)

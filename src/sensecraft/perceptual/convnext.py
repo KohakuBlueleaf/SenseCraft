@@ -10,6 +10,7 @@ import torch
 from torch import Tensor, nn
 
 from sensecraft.distance import feature_distance
+from sensecraft.kernels import wide
 from sensecraft.nets.convnext import TORCHVISION, ConvNeXtConfig, convnext
 from sensecraft.registry import Range, register
 from sensecraft.weights import DINOV3_CONVNEXT, config, weights
@@ -71,10 +72,14 @@ class ConvNeXtTerm(nn.Module):
         self.register_buffer("std", Tensor(STD).view(1, 3, 1, 1))
 
     def features(self, x: Tensor) -> list[Tensor]:
-        """Feature maps of an image in [-1, 1]; a gray image is repeated to three channels."""
+        """Feature maps of an image in [-1, 1]; a gray image is repeated to three channels.
+
+        The normalized image stays in at least fp32; the stem keeps its low bits.
+        """
         if x.shape[1] == 1:
             x = x.repeat(1, 3, 1, 1)
-        return self.net((((x + 1) / 2 - self.mean) / self.std).to(self.net.dtype))
+        x = wide(x)
+        return self.net(((x + 1) / 2 - self.mean.to(x.dtype)) / self.std.to(x.dtype))
 
     def distance(self, fake: list[Tensor], real: list[Tensor]) -> Tensor:
         """The weighted sum of the configured distance over the feature layers."""

@@ -3,6 +3,9 @@
 The flat numbering is the one the 0.3.13 losses tapped: torchvision's `features` and the DINOv3
 stages both unrolled into single layers. Torchvision ConvNeXt and DINOv3 ConvNeXt share it; only
 the sizes, and where DINOv3 keeps them, its `config.json`, differ.
+
+Convs and linears run in the compute dtype; the stream between them, the norms, the activation
+and the layer scale run in at least fp32, and the stem keeps the image's low bits.
 """
 
 from dataclasses import dataclass
@@ -11,6 +14,7 @@ import torch
 import torch.nn.functional as F
 from torch import Tensor, nn
 
+from sensecraft.kernels import compute_dtype, split_layer, wide
 from sensecraft.nets.base import TapSequence
 
 
@@ -45,18 +49,35 @@ TORCHVISION = {
 ACTIVATIONS = {"gelu": F.gelu}
 
 
+def layer_norm(norm: nn.LayerNorm, x: Tensor) -> Tensor:
+    """`norm` on the last dim in at least fp32, whatever dtype its weights are held in."""
+    x = wide(x)
+    weight, bias = norm.weight.to(x.dtype), norm.bias.to(x.dtype)
+    return F.layer_norm(x, norm.normalized_shape, weight, bias, norm.eps)
+
+
 class ChannelNorm(nn.LayerNorm):
     """LayerNorm over the channels of a channel-first map, through channels-last as upstream does."""
 
     def forward(self, x: Tensor) -> Tensor:
-        x = F.layer_norm(
-            x.permute(0, 2, 3, 1),
-            self.normalized_shape,
-            self.weight,
-            self.bias,
-            self.eps,
-        )
-        return x.permute(0, 3, 1, 2)
+        return layer_norm(self, x.permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
+
+
+class StemConv(nn.Conv2d):
+    """The conv that reads the image, keeping its low bits; the output is in at least fp32."""
+
+    def forward(self, x: Tensor) -> Tensor:
+        def conv(image: Tensor, weight: Tensor, bias: Tensor | None) -> Tensor:
+            return F.conv2d(image, weight, bias, self.stride, self.padding)
+
+        return split_layer(conv, x, self.weight, self.bias)
+
+
+class StageConv(nn.Conv2d):
+    """A downsampling conv that reads the wide stream in the compute dtype."""
+
+    def forward(self, x: Tensor) -> Tensor:
+        return super().forward(x.to(compute_dtype(x, self.weight)))
 
 
 class Block(nn.Module):
@@ -74,11 +95,14 @@ class Block(nn.Module):
         self.act = ACTIVATIONS[config.hidden_act]
 
     def forward(self, x: Tensor) -> Tensor:
-        branch = self.depthwise_conv(x).permute(0, 2, 3, 1)
-        branch = self.pointwise_conv2(
-            self.act(self.pointwise_conv1(self.layer_norm(branch)))
-        )
-        return x + (branch * self.gamma).permute(0, 3, 1, 2)
+        """`x` is the stream in at least fp32; convs and linears run in the compute dtype."""
+        x = wide(x)
+        compute = compute_dtype(x, self.depthwise_conv.weight)
+        branch = self.depthwise_conv(x.to(compute)).permute(0, 2, 3, 1)
+        branch = self.pointwise_conv1(layer_norm(self.layer_norm, branch).to(compute))
+        branch = self.pointwise_conv2(self.act(wide(branch)).to(compute))
+        branch = wide(branch) * self.gamma.to(x.dtype)
+        return x + branch.permute(0, 3, 1, 2)
 
 
 def convnext(config: ConvNeXtConfig, taps: list[int]) -> TapSequence:
@@ -86,7 +110,7 @@ def convnext(config: ConvNeXtConfig, taps: list[int]) -> TapSequence:
     eps = config.layer_norm_eps
     first = config.hidden_sizes[0]
     layers: list[nn.Module] = [
-        nn.Conv2d(3, first, kernel_size=4, stride=4),
+        StemConv(3, first, kernel_size=4, stride=4),
         ChannelNorm(first, eps=eps),
     ]
     previous = first
@@ -97,7 +121,7 @@ def convnext(config: ConvNeXtConfig, taps: list[int]) -> TapSequence:
         if stage > 0:
             layers += [
                 ChannelNorm(previous, eps=eps),
-                nn.Conv2d(previous, channels, kernel_size=2, stride=2),
+                StageConv(previous, channels, kernel_size=2, stride=2),
             ]
         layers += [Block(channels, config) for _ in range(depth)]
         previous = channels

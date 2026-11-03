@@ -11,7 +11,7 @@ CHANNELS = [64, 192, 384, 256, 256]
 def alexnet() -> TapSequence:
     """AlexNet up to its last ReLU; weights come from `sensecraft.weights`."""
     layers = [
-        *conv_relu(3, 64, kernel_size=11, stride=4, padding=2),
+        *conv_relu(3, 64, first=True, kernel_size=11, stride=4, padding=2),
         nn.MaxPool2d(3, 2),
         *conv_relu(64, 192, kernel_size=5, padding=2),
         nn.MaxPool2d(3, 2),
