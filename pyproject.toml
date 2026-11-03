@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sensecraft"
-version = "0.4.0"
+version = "0.4.1"
 description = "Perceptual and signal losses for image and video models"
 authors = [
     { name = "Shih-Ying Yeh(KohakuBlueLeaf)", email = "apolloyeh0123@gmail.com" },

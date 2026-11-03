@@ -1,6 +1,6 @@
 # Change Log
 
-## Unreleased
+## 2026-11-03 update to 0.4.1
 
 ### Highlights
 
