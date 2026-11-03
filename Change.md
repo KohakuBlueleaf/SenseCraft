@@ -1,5 +1,24 @@
 # Change Log
 
+## 2026-11-03 update to 0.4.2
+
+### Highlights
+
+* `Term(..., shift=s)`: a random shift per call for any term. The pair is cropped together by
+  `s` pixels at a random offset, so a pooling net's gradient grid moves every step. With `shift=16`
+  LPIPS VGG's push that repeats across calls drops from 100% to 55% of its energy, AlexNet's to
+  35%.
+
+### Full change log
+
+#### New Features
+
+* `Term.shift`, applied by `Loss` to trained terms; monitor terms see the whole image. The offset
+  is drawn from torch's CPU generator, the crop runs outside compiled graphs, and the window size
+  never changes.
+* `measure/s8_shift.py`: stage S8, gradient persistence and spread under shift. S6 checks the
+  crop, the zero gradient outside it, monitors and the refused oversize shift.
+
 ## 2026-11-03 update to 0.4.1
 
 ### Highlights

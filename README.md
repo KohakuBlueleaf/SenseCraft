@@ -27,7 +27,7 @@ from sensecraft import Loss, Term
 loss = Loss(
     [
         Term("mse"),
-        Term("lpips", 0.5, net="vgg"),
+        Term("lpips", 0.5, net="vgg", shift=16),  # random 16 px shift per call
         Term("dino_vit", 250, model="base", use_gram=False),
         Term("ssim", monitor=True),          # logged, not in the total
     ],
@@ -40,6 +40,8 @@ out = loss.value_and_seed(fake, real)        # also out.seed = d total / d fake,
 ```
 
 - Each term reads its images in the range it was trained for; `Loss` converts from `input_range`.
+- `shift=s` crops the pair together by `s` pixels at a random offset on every call, so a net's
+  pooling grid lands on a new phase each step; monitor terms see the whole image. See Shift.
 - Image terms run per frame on video; video terms see the clip.
 - `prepare` puts the feature nets in the compute dtype and layout and compiles by scope: `off`,
   `term` or `loss`. Distances stay in fp32.
@@ -153,6 +155,28 @@ Every term and mode is in `measure/figures/s7_near.svg`; dashed lines are before
 
 Changed on purpose against 0.3.13: `tssim` reads [-1, 1] clips, which its formulas assume; `ssim3d`
 and `stssim` read [0, 1] clips instead of guessing the range from the input's minimum.
+
+## Shift
+
+A net with pooling sends its gradient through a fixed grid: LPIPS VGG's deepest tap, behind four
+max-pools, carries about 70% of its gradient norm, and each pool passes the gradient to one input
+of four. The same pixels get the same push at every step, and a pattern locked to that grid can
+build up. `Term(..., shift=s)` crops the pair by `s` pixels at a random offset per call, drawn on
+the host and kept out of compiled graphs; the window size is fixed, so nothing recompiles.
+
+S8 (`measure/s8_shift.py`) takes the gradient at a blurred and noised copy of 8 ImageNet validation
+images over 16 calls. Persistence is |mean gradient|^2 over mean |gradient|^2: 1 when every call
+pushes the same way.
+
+| Term | shift 0 | shift 8 | shift 16 | shift 32 |
+| --- | --- | --- | --- | --- |
+| LPIPS VGG | 1.00 | 0.59 | 0.55 | 0.51 |
+| LPIPS AlexNet | 1.00 | 0.38 | 0.35 | 0.35 |
+
+About half of LPIPS VGG's push moves with the shift and half stays with the image content; the
+mean gradient keeps about two thirds of its power above a quarter of the sampling rate. 16 px, the
+stride of VGG's deepest tap, gets most of the effect. A shifted LPIPS VGG call at batch 32 and
+256 px takes 24.7 ms against 25.8 ms, on the smaller window.
 
 ## Speed
 
