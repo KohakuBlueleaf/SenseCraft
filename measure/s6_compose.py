@@ -48,6 +48,14 @@ class Dtype(nn.Module):
         return input.new_tensor(float(input.dtype == torch.float32))
 
 
+@register("stub_crop_sum")
+class CropSum(nn.Module):
+    """Sum of input minus target, so a crop shows in the value and the gradient."""
+
+    def forward(self, input: Tensor, target: Tensor) -> Tensor:
+        return (input - target).sum()
+
+
 def check(name: str, ok: bool) -> None:
     """Print one line, and stop at the first failure."""
     print(("ok  " if ok else "FAIL") + "  " + name)
@@ -133,6 +141,33 @@ def main() -> None:
     with torch.autocast("cpu", dtype=torch.bfloat16):
         out = Loss([Term("stub_fp32")])(fake.bfloat16(), real.bfloat16())
     check("fp32 term gets fp32", out.total.item() == 1)
+
+    # Shift: the pair is cropped together, the window size is fixed, the gradient stays inside it
+    torch.manual_seed(1)
+    out = Loss([Term("stub_crop_sum", shift=3)]).value_and_seed(fake, real)
+    torch.manual_seed(1)
+    top, left = torch.randint(4, (2,)).tolist()
+    window = (..., slice(top, top + 5), slice(left, left + 5))
+    check(
+        "shift crops fake and real together",
+        torch.allclose(out.total, (fake[window] - real[window]).sum()),
+    )
+    inside = torch.zeros_like(fake, dtype=torch.bool)
+    inside[window] = True
+    check(
+        "shifted seed is zero outside the window", bool((out.seed[~inside] == 0).all())
+    )
+    out = Loss([Term("stub_crop_sum", monitor=True, shift=3)])(fake, real)
+    check(
+        "monitor terms see the whole image",
+        torch.allclose(out.terms["stub_crop_sum"], (fake - real).sum()),
+    )
+    try:
+        Loss([Term("stub_crop_sum", shift=8)])(fake, real)
+        refused = False
+    except ValueError:
+        refused = True
+    check("a shift as large as the image is refused", refused)
 
     # Unknown names come back with the closest ones
     try:
