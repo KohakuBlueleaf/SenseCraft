@@ -1,5 +1,38 @@
 # Change Log
 
+## Unreleased
+
+### Highlights
+
+* A perceptual term's gradient no longer loses its direction when the prediction is near the
+  target. The layer that reads the image keeps the image's low bits, and the DINOv3 and ConvNeXt
+  residual streams, norms, activations and layer scales run in fp32. LPIPS VGG in fp16 at noise
+  1e-4 goes from 0.55 to 0.93 cosine to fp64. DINOv3 ViT-B in fp16 at noise 1e-3 goes from 0.06
+  to 0.89. Costs: 2.2 ms on LPIPS VGG and under 1 ms on the others, at batch 32 and 256 px.
+* Plain terms run in strict fp32: autocast off, fp32 inputs, no TF32.
+
+### Full change log
+
+#### New Features
+
+* `measure/s7_near.py`: stage S7, the gradient near the target in fp16, bf16, TF32 and fp32,
+  drawn to `measure/figures/s7_near.svg`.
+* `sensecraft.precision.strict_fp32`, and `kernels.split_layer` for a first layer that keeps its
+  input's low bits.
+
+#### Changes
+
+* Every pixel term and `fdb`, `temporal_accel` and `temporal_gradient` are registered `fp32=True`.
+  `fp32=True` now also turns off TF32 for convs and matmuls.
+* Feature nets return their features in at least fp32.
+
+#### Fixes
+
+* LPIPS unit vectors take the eps inside the root. An all-zero feature vector gave a NaN gradient
+  in any dtype.
+* `charbonnier` and the inner Charbonnier distance could give `sqrt(0)` under fp16 inputs, where
+  `eps ** 2` underflows. They now always run in fp32.
+
 ## 2026-11-02 update to 0.4.0
 
 A rewrite: own feature nets, a compose layer that returns the gradient at the prediction, fp32
