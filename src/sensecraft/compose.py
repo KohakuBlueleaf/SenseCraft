@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 import torch
 from torch import Tensor, nn
 
+from sensecraft.kernels import wide
+from sensecraft.precision import strict_fp32
 from sensecraft.prepare import prepare
 from sensecraft.registry import Range, TermInfo, lookup
 
@@ -98,9 +100,10 @@ class Loss(nn.Module):
         if self.dims == 3 and info.dims == "2d":
             fake, real = fake.flatten(0, 1), real.flatten(0, 1)
 
+        # Plain terms run in strict fp32; feature-net terms keep their own mixed precision
         if info.fp32:
-            with torch.autocast(fake.device.type, enabled=False):
-                return self.parts[label](fake.float(), real.float())
+            with torch.autocast(fake.device.type, enabled=False), strict_fp32():
+                return self.parts[label](wide(fake), wide(real))
         return self.parts[label](fake, real)
 
     def forward(self, fake: Tensor, real: Tensor) -> Out:

@@ -53,7 +53,7 @@ def distance(kind: Distance, input: Tensor, target: Tensor) -> Tensor:
 # Standard regression losses
 
 
-@register("mse")
+@register("mse", fp32=True)
 class MSELoss(nn.Module):
     """Mean squared error."""
 
@@ -61,7 +61,7 @@ class MSELoss(nn.Module):
         return F.mse_loss(input, target)
 
 
-@register("l1")
+@register("l1", fp32=True)
 class L1Loss(nn.Module):
     """Mean absolute error."""
 
@@ -69,7 +69,7 @@ class L1Loss(nn.Module):
         return F.l1_loss(input, target)
 
 
-@register("huber")
+@register("huber", fp32=True)
 class HuberLoss(nn.Module):
     """Huber loss: quadratic below `delta`, linear above."""
 
@@ -81,7 +81,7 @@ class HuberLoss(nn.Module):
         return F.huber_loss(input, target, delta=self.delta)
 
 
-@register("smooth_l1")
+@register("smooth_l1", fp32=True)
 class SmoothL1Loss(nn.Module):
     """Smooth L1: Huber divided by `beta`."""
 
@@ -93,7 +93,7 @@ class SmoothL1Loss(nn.Module):
         return F.smooth_l1_loss(input, target, beta=self.beta)
 
 
-@register("rmse")
+@register("rmse", fp32=True)
 class RMSELoss(nn.Module):
     """Root mean squared error, sqrt(mse + eps)."""
 
@@ -106,7 +106,7 @@ class RMSELoss(nn.Module):
         return torch.sqrt(mse + self.eps)
 
 
-@register("mape")
+@register("mape", fp32=True)
 class MAPELoss(nn.Module):
     """Mean absolute percentage error, |x - y| / |y|; unstable for targets near zero."""
 
@@ -119,7 +119,7 @@ class MAPELoss(nn.Module):
         return loss.mean()
 
 
-@register("smape")
+@register("smape", fp32=True)
 class SMAPELoss(nn.Module):
     """Symmetric mean absolute percentage error, 2 |x - y| / (|x| + |y|)."""
 
@@ -133,7 +133,7 @@ class SMAPELoss(nn.Module):
         return (2.0 * numerator / denominator).mean()
 
 
-@register("log_cosh")
+@register("log_cosh", fp32=True)
 class LogCoshLoss(nn.Module):
     """log(cosh(x - y)): L2 for small errors, L1 for large ones."""
 
@@ -145,7 +145,7 @@ class LogCoshLoss(nn.Module):
         return loss.mean()
 
 
-@register("quantile")
+@register("quantile", fp32=True)
 class QuantileLoss(nn.Module):
     """Pinball loss for quantile q: q max(y - x, 0) + (1 - q) max(x - y, 0)."""
 
@@ -164,7 +164,7 @@ class QuantileLoss(nn.Module):
 # Robust regression losses
 
 
-@register("cauchy")
+@register("cauchy", fp32=True)
 class CauchyLoss(nn.Module):
     """Cauchy (Lorentzian) loss, log(1 + ((x - y) / c)^2)."""
 
@@ -177,7 +177,7 @@ class CauchyLoss(nn.Module):
         return torch.log1p(diff**2).mean()
 
 
-@register("geman_mcclure")
+@register("geman_mcclure", fp32=True)
 class GemanMcClureLoss(nn.Module):
     """Geman-McClure loss, d^2 / (1 + d^2) with d = (x - y) / c; bounded by 1."""
 
@@ -190,7 +190,7 @@ class GemanMcClureLoss(nn.Module):
         return (diff_sq / (1 + diff_sq)).mean()
 
 
-@register("welsch")
+@register("welsch", fp32=True)
 class WelschLoss(nn.Module):
     """Welsch (Leclerc) loss, 1 - exp(-d^2 / 2) with d = (x - y) / c."""
 
@@ -203,7 +203,7 @@ class WelschLoss(nn.Module):
         return (1 - torch.exp(-0.5 * diff_sq)).mean()
 
 
-@register("tukey")
+@register("tukey", fp32=True)
 class TukeyBiweightLoss(nn.Module):
     """Tukey's biweight: (c^2 / 6)(1 - (1 - (d / c)^2)^3) for |d| <= c, else c^2 / 6."""
 
@@ -221,7 +221,7 @@ class TukeyBiweightLoss(nn.Module):
         return loss.mean()
 
 
-@register("wing")
+@register("wing", fp32=True)
 class WingLoss(nn.Module):
     """Wing loss: w ln(1 + |d| / eps) below width w, |d| - offset above it."""
 
@@ -243,7 +243,7 @@ class WingLoss(nn.Module):
         return loss.mean()
 
 
-@register("charbonnier")
+@register("charbonnier", fp32=True)
 class CharbonnierLoss(nn.Module):
     """Charbonnier loss, sqrt((x - y)^2 + eps^2): an L1 that is smooth at zero."""
 
@@ -258,7 +258,7 @@ class CharbonnierLoss(nn.Module):
 # Noise-aware loss
 
 
-@register("gaussian_noise")
+@register("gaussian_noise", fp32=True)
 class GaussianNoiseLoss(nn.Module):
     """A distance to the target, optionally after adding Gaussian noise to the target.
 

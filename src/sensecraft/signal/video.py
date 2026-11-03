@@ -190,7 +190,7 @@ class TSSIM(nn.Module):
         return 1 - score
 
 
-@register("fdb", dims="3d")
+@register("fdb", dims="3d", fp32=True)
 class FDBLoss(nn.Module):
     """Frame difference boundary loss: distance between frame differences.
 
@@ -209,7 +209,7 @@ class FDBLoss(nn.Module):
         )
 
 
-@register("temporal_accel", dims="3d")
+@register("temporal_accel", dims="3d", fp32=True)
 class TemporalAccelerationLoss(nn.Module):
     """Distance between second temporal differences, x[t + 1] - 2 x[t] + x[t - 1].
 
@@ -339,6 +339,6 @@ class PatchFFT3DLoss(nn.Module):
         )
 
 
-@register("temporal_gradient", dims="3d")
+@register("temporal_gradient", dims="3d", fp32=True)
 class TemporalGradientLoss(FDBLoss):
     """Distance between frame differences; the same loss as `fdb` under another name."""

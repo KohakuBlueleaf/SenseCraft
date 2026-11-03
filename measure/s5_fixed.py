@@ -47,14 +47,13 @@ def run(loss, input, target, dtype) -> tuple[torch.Tensor, torch.Tensor]:
 
 
 def flags_match(term, old_flags: dict) -> bool:
-    """The new registration carries the old range, layout and fp32 flags."""
+    """The new registration carries the old range and layout, and runs in strict fp32.
+
+    0.3.13 ran only the FFT and SSIM terms in fp32; every fixed term does now.
+    """
     dims = "2d" if old_flags["is_2d_only"] else "any"
     dims = "3d" if old_flags["is_3d_only"] else dims
-    return (
-        term.range.value == old_flags["range"]
-        and term.dims == dims
-        and term.fp32 == old_flags["requires_fp32"]
-    )
+    return term.range.value == old_flags["range"] and term.dims == dims and term.fp32
 
 
 def worst(*marks: str | None) -> str | None:

@@ -21,7 +21,7 @@ class TermInfo:
     factory: Callable
     range: Range
     dims: str  # "2d": images, run per frame on video; "3d": video only; "any": either
-    fp32: bool  # runs with autocast off on fp32 inputs
+    fp32: bool  # runs in strict fp32: autocast off, fp32 inputs, no TF32
 
 
 TERMS: dict[str, TermInfo] = {}
