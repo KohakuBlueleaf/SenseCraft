@@ -11,8 +11,11 @@ EPS = 1e-10
 
 
 def unit_channels(x: Tensor) -> Tensor:
-    """`x` with each pixel's channel vector scaled to unit length."""
-    return x / (x.square().sum(dim=1, keepdim=True).sqrt() + EPS)
+    """`x` with each pixel's channel vector scaled to unit length.
+
+    The eps sits inside the root, so a zero vector has a finite gradient; `sqrt` has none at zero.
+    """
+    return x * torch.rsqrt(x.square().sum(dim=1, keepdim=True) + EPS * EPS)
 
 
 def lpips_distance(
